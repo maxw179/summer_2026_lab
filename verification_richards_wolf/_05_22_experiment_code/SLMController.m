@@ -141,9 +141,9 @@ classdef SLMController < handle
             end
 
             phase8 = uint8(mod(angle(EfieldVec(:)) * obj.InvPiOver128, 256));
-            frame  = uint8(phase8) .* uint8(obj.Mask);
+            %frame  = uint8(phase8) .* uint8(obj.Mask);
 
-            obj.E_SLM_ptr.value = frame;
+            obj.E_SLM_ptr.value = unit(phase8);
 
             calllib('Blink_C_wrapper','Write_image', ...
                 obj.BoardNumber, obj.E_SLM_ptr, obj.NBytes, ...

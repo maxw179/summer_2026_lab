@@ -1,36 +1,17 @@
-%% test_aberration_series_offline.m
-% Hardware-free version of acquire_aberration_series.m.
-%
-% Builds Zernike phase maps and complex E fields without connecting to
-% the microscope, SLM, ScanImage, Blink SDK, or any external hardware.
-%
-% Outputs:
-%   log(k).phase_waves       [1024 x 1024], phase in waves
-%   log(k).phase_rad         [1024 x 1024], phase in radians
-%   log(k).E                 [1024 x 1024], complex field exp(i phase)
-%   log(k).E_with_bg         [1024 x 1024], complex field with background grating
-%   log(k).pupil             [1024 x 1024], logical circular pupil
-
-clear; clc; close all;
+%% simulate_aberration_series.m
+% Iterates over a list of aberrations and plots the simulated E field.
+% No SLM, ScanImage, DLLs, or external hardware required.
 
 %% ---------------- USER SETTINGS ----------------
 
+outputFolder = fullfile(pwd, 'simulated_E_fields');
+if ~exist(outputFolder, 'dir'); mkdir(outputFolder); end
 
+% Simulated SLM dimensions
+slmWidth  = 1024;
+slmHeight = 1024;
 
-N = 1024;
-
-% Whether to add a simple software-generated grating outside the pupil.
-addBackgroundGrating = true;
-
-% Background grating settings.
-% This replaces the hardware-dependent generateGratings(...) call.
-bgPeriodPixels = 8;       % grating period in pixels
-bgDirection    = 'x';     % 'x' or 'y'
-
-% Display settings
-makePlots = true;
-plotAberrationIndex = 1;  % choose which aberration to visualize
-
+saveFigures = true;
 
 %% ---------------- DEFINE ABERRATIONS ----------------
 % nm:     [n m] Zernike mode pairs corresponding to Z_n^m
@@ -114,11 +95,11 @@ waist_y  = 431;
 radius = min(waist_x, waist_y)/2;
 
 
-%% ---------------- BUILD TEST FIELDS ----------------
+%% ---------------- SIMULATE E FIELDS ----------------
 
 log = struct([]);
 
-for k = 1:numel(aberrations);
+for k = 1:numel(aberrations)
 
     name   = aberrations(k).name;
     nm     = aberrations(k).nm;
@@ -128,10 +109,12 @@ for k = 1:numel(aberrations);
         k, numel(aberrations), name);
 
     if isempty(nm)
-        pupil = makeCircularPupil(N, N, [center_x, center_y], radius);
+        % Flat phase
+        E = ones(slmWidth * slmHeight, 1);
+        phase_waves = zeros(slmWidth * slmHeight, 1);
 
-        phase_waves_vec = zeros(N*N, 1);
-        E_vec = ones(N*N, 1);
+        pupil = makeCircularPupil( ...
+            slmWidth, slmHeight, [center_x, center_y], radius);
 
     else
         if size(nm, 1) ~= numel(coeffs)
@@ -140,97 +123,82 @@ for k = 1:numel(aberrations);
         end
 
         [Z, pupil] = buildZernikeBasisOnSLM( ...
-            N, N, nm, ...
-            'Center', [center_x, center_y], ...
-            'Radius', radius);
+            slmWidth, slmHeight, nm, [center_x, center_y], radius);
 
-        [E_vec, phase_waves_vec] = makeSLMField(Z, coeffs);
+        [E, phase_waves] = makeSLMField(Z, coeffs);
     end
 
-    phase_waves = reshape(phase_waves_vec, N, N);
-    phase_rad   = 2*pi*phase_waves;
-    E           = reshape(E_vec, N, N);
 
-    if addBackgroundGrating
-        bg_phase_rad = makeBackgroundGratingPhase( ...
-            N, N, bgPeriodPixels, bgDirection);
+    %% -------- Add simulated background grating outside the pupil only --------
 
-        E_bg = exp(1i * bg_phase_rad);
+    E = addBG(E, slmWidth, slmHeight, pupil);
 
-        % Apply background grating outside the circular pupil only.
-        E_with_bg = E;
-        E_with_bg(~pupil) = E_bg(~pupil);
-    else
-        bg_phase_rad = zeros(N, N);
-        E_with_bg = E;
+
+    %% -------- Reshape for plotting --------
+
+    E_img = reshape(E, slmHeight, slmWidth);
+    phase_waves_img = reshape(phase_waves, slmHeight, slmWidth);
+
+    phase_rad_img = angle(E_img);
+    real_img = real(E_img);
+    imag_img = imag(E_img);
+
+
+    %% -------- Plot simulated E field --------
+
+    fig = figure('Name', name, 'Color', 'w');
+    tiledlayout(2, 2, 'Padding', 'compact', 'TileSpacing', 'compact');
+
+    nexttile;
+    imagesc(phase_waves_img);
+    axis image off;
+    colorbar;
+    title('Pupil phase [waves]');
+
+    nexttile;
+    imagesc(phase_rad_img);
+    axis image off;
+    colorbar;
+    title('Total phase angle(E) [rad]');
+
+    nexttile;
+    imagesc(real_img);
+    axis image off;
+    colorbar;
+    title('Re(E)');
+
+    nexttile;
+    imagesc(imag_img);
+    axis image off;
+    colorbar;
+    title('Im(E)');
+
+    sgtitle(sprintf('%s: simulated E field', name), 'Interpreter', 'none');
+
+
+    %% -------- Save simulated data / figure --------
+
+    if saveFigures
+        saveas(fig, fullfile(outputFolder, sprintf('%02d_%s_Efield.png', k, name)));
     end
+
+    save(fullfile(outputFolder, sprintf('%02d_%s_Efield.mat', k, name)), ...
+        'E', 'phase_waves', 'pupil', 'nm', 'coeffs');
+
+
+    %% -------- Log --------
 
     log(k).name = name;
     log(k).nm = nm;
     log(k).coeffs = coeffs;
-
     log(k).phase_waves = phase_waves;
-    log(k).phase_rad = phase_rad;
-    log(k).E = E;
-    log(k).E_with_bg = E_with_bg;
     log(k).pupil = pupil;
-    log(k).bg_phase_rad = bg_phase_rad;
 
-    fprintf('Built %s\n', name);
+    fprintf('Plotted %s\n', name);
 end
 
-
-%% ---------------- OPTIONAL PLOTS ----------------
-
-if makePlots
-    k = plotAberrationIndex;
-
-    phase_waves = log(k).phase_waves;
-    phase_rad   = log(k).phase_rad;
-    E           = log(k).E;
-    E_with_bg   = log(k).E_with_bg;
-    pupil       = log(k).pupil;
-
-    figure;
-    imagesc(phase_waves);
-    axis image;
-    colorbar;
-    title(sprintf('%s: phase in waves', log(k).name));
-    xlabel('x pixel');
-    ylabel('y pixel');
-
-    figure;
-    imagesc(phase_rad);
-    axis image;
-    colorbar;
-    title(sprintf('%s: phase in radians', log(k).name));
-    xlabel('x pixel');
-    ylabel('y pixel');
-
-    figure;
-    imagesc(angle(E));
-    axis image;
-    colorbar;
-    title(sprintf('%s: angle(E), no background grating', log(k).name));
-    xlabel('x pixel');
-    ylabel('y pixel');
-
-    figure;
-    imagesc(angle(E_with_bg));
-    axis image;
-    colorbar;
-    title(sprintf('%s: angle(E with background grating)', log(k).name));
-    xlabel('x pixel');
-    ylabel('y pixel');
-
-    figure;
-    imagesc(pupil);
-    axis image;
-    colorbar;
-    title('Circular pupil mask');
-    xlabel('x pixel');
-    ylabel('y pixel');
-end
+save(fullfile(outputFolder, 'aberration_series_log.mat'), ...
+    'aberrations', 'log');
 
 disp('Done.');
 
@@ -249,7 +217,29 @@ function [E, phase_waves] = makeSLMField(Zbasis, coeffs)
 end
 
 
-function [Zbasis, pupil] = buildZernikeBasisOnSLM(width, height, nmPairs, varargin)
+function E_with_bg = addBG(E, width, height, pupil)
+% Hardware-free replacement for the old addBG.
+% Adds a simple phase grating outside the pupil only.
+
+    BP_bg_grating = 8;
+
+    [X, ~] = meshgrid(1:width, 1:height);
+
+    % Simulated phase grating in waves.
+    % Period = BP_bg_grating pixels.
+    bg_phase_waves = mod(X, BP_bg_grating) / BP_bg_grating;
+
+    pupilVec = pupil(:);
+    bg_phase_waves_vec = bg_phase_waves(:);
+
+    E_bg = ones(width * height, 1);
+    E_bg(~pupilVec) = exp(1i * 2*pi * bg_phase_waves_vec(~pupilVec));
+
+    E_with_bg = E .* E_bg;
+end
+
+
+function [Zbasis, pupil] = buildZernikeBasisOnSLM(width, height, nmPairs, center, Rpix)
 % Returns Zbasis [Npix x nModes] in WAVES.
 %
 % nmPairs should be [n m], corresponding to Z_n^m.
@@ -263,16 +253,6 @@ function [Zbasis, pupil] = buildZernikeBasisOnSLM(width, height, nmPairs, vararg
 %
 % Outside the pupil:
 %   Z = 0
-%
-% No RMS normalization is applied.
-
-    p = inputParser;
-    addParameter(p, 'Center', [width/2, height/2]);
-    addParameter(p, 'Radius', min(width,height)/2);
-    parse(p, varargin{:});
-
-    center = p.Results.Center;
-    Rpix   = p.Results.Radius;
 
     nModes = size(nmPairs, 1);
     Npix = width * height;
@@ -311,28 +291,6 @@ function pupil = makeCircularPupil(width, height, center, radius)
     y = Y - center(2);
 
     pupil = sqrt(x.^2 + y.^2) <= radius;
-end
-
-
-function bg_phase_rad = makeBackgroundGratingPhase(width, height, periodPixels, direction)
-% Software-only replacement for the external generateGratings call.
-%
-% Returns a phase ramp in radians.
-%
-% periodPixels controls how many pixels correspond to one 2pi phase cycle.
-
-    [X, Y] = meshgrid(1:width, 1:height);
-
-    switch lower(direction)
-        case 'x'
-            coord = X;
-        case 'y'
-            coord = Y;
-        otherwise
-            error('direction must be either "x" or "y".');
-    end
-
-    bg_phase_rad = 2*pi * coord / periodPixels;
 end
 
 

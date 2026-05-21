@@ -141,8 +141,7 @@ try
             phase_waves = zeros(slm.Width * slm.Height, 1);
 
             pupil = makeCircularPupil( ...
-                slm.Width, slm.Height, ...
-                [center_x, center_y], radius);
+                slm.Width, slm.Height, [center_x, center_y], radius);
 
         else
             if size(nm, 1) ~= numel(coeffs)
@@ -151,9 +150,7 @@ try
             end
 
             [Z, pupil] = buildZernikeBasisOnSLM( ...
-                slm.Width, slm.Height, nm, ...
-                'Center', [center_x, center_y], ...
-                'Radius', radius);
+                slm.Width, slm.Height, nm, [center_x, center_y], radius);
 
             [E, phase_waves] = makeSLMField(Z, coeffs);
         end
@@ -161,27 +158,7 @@ try
 
         %% -------- Add background grating outside the pupil only --------
 
-        board_number = 1;
-        depth = calllib('Blink_C_wrapper', 'Get_image_depth', board_number); 
-        Bytes = depth/8;
-
-        WFC = libpointer('uint8Ptr', zeros(slm.Width * slm.Height * Bytes, 1));
-
-        BP_bg_grating = 8;
-        bg_grating = generateGratings(BP_bg_grating, 3, false, WFC);
-
-        pupilVec = pupil(:);
-        bgVec = bg_grating(1).value(:);
-
-        E_bg_slm = zeros(slm.Width * slm.Height, 1, 'uint8');
-
-        % Apply grating only outside the circular pupil.
-        E_bg_slm(~pupilVec) = bgVec(~pupilVec);
-
-        E_bg = exp(1j * double(E_bg_slm) * pi/128);
-
-        E = E .* E_bg;
-
+        E = addBG(E, slm, pupil);
 
         %% -------- Write aberration to SLM --------
 
@@ -243,8 +220,32 @@ function [E, phase_waves] = makeSLMField(Zbasis, coeffs)
     E = exp(1i * 2*pi * phase_waves);
 end
 
+function [E_with_bg] = addBG(E, slm, pupil)
+    board_number = slm.BoardNumber;
+    depth = calllib('Blink_C_wrapper', 'Get_image_depth', board_number); 
+    Bytes = depth/8;
 
-function [Zbasis, pupil] = buildZernikeBasisOnSLM(width, height, nmPairs, varargin)
+    WFC = libpointer('uint8Ptr', zeros(slm.Width * slm.Height * Bytes, 1));
+
+    BP_bg_grating = 8;
+    bg_grating = generateGratings(BP_bg_grating, 3, false, WFC);
+
+    pupilVec = pupil(:);
+    bgVec = bg_grating(1).value(:);
+
+    E_bg_slm = zeros(slm.Width * slm.Height, 1, 'uint8');
+
+    % Apply grating only outside the circular pupil.
+    E_bg_slm(~pupilVec) = bgVec(~pupilVec);
+
+    E_bg = exp(1j * double(E_bg_slm) * pi/128);
+
+    E_with_bg = E .* E_bg;
+end
+
+
+
+function [Zbasis, pupil] = buildZernikeBasisOnSLM(width, height, nmPairs, center, Rpix)
 % Returns Zbasis [Npix x nModes] in WAVES.
 %
 % nmPairs should be [n m], corresponding to Z_n^m.
@@ -258,17 +259,6 @@ function [Zbasis, pupil] = buildZernikeBasisOnSLM(width, height, nmPairs, vararg
 %
 % Outside the pupil:
 %   Z = 0
-%
-% No RMS normalization is applied.
-
-    p = inputParser;
-    addParameter(p, 'Center', [width/2, height/2]);
-    addParameter(p, 'Radius', min(width,height)/2);
-    parse(p, varargin{:});
-
-    center = p.Results.Center;
-    Rpix   = p.Results.Radius;
-
     nModes = size(nmPairs, 1);
     Npix = width * height;
 
