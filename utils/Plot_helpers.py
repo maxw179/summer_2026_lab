@@ -23,7 +23,7 @@ def plot_intensity(x, y, intensity_map, file_name = None):
     plt.colorbar(label='Intensity (Normalized)')
     plt.gca().set_aspect("equal")
     if not(file_name is None):
-        plt.savefig(f"benchmarking_figures/{file_name}.png", bbox_inches = "tight")
+        plt.savefig(f"figures/{file_name}.png", bbox_inches = "tight")
     
     plt.show()
 
@@ -46,7 +46,7 @@ def plot_intensity_unnorm(x, y, intensity_map, file_name = None):
     plt.colorbar(label='Intensity (Unnormalized)')
     plt.gca().set_aspect("equal")
     if not(file_name is None):
-        plt.savefig(f"benchmarking_figures/{file_name}.png", bbox_inches = "tight")
+        plt.savefig(f"figures/{file_name}.png", bbox_inches = "tight")
     
     plt.show()
 
@@ -97,13 +97,13 @@ def zernike_plot(z_map, alpha, file_name = None):
         plt.savefig(f"{file_name}.png")
     plt.show()
 
-def composite_plot(x, y, intensity_map, z_map, alpha, file_name = "composite_map"):
+def composite_plot(x, y, intensity_map, z_map, alpha, file_name = None):
     fig, ax = plt.subplots(dpi = 300)
     plt.imshow(intensity_map / np.max(intensity_map),
             extent=[x[0], x[-1], y[0], y[-1]],
         origin='lower',
         aspect = "equal",
-        cmap='Greys_r')
+        cmap='Greys')
     ax.grid(False)
     plt.xticks(rotation=45)
     plt.yticks(rotation=45)
@@ -119,13 +119,13 @@ def composite_plot(x, y, intensity_map, z_map, alpha, file_name = "composite_map
     z = z_map(theta_grid, phi_grid)                          
     size_param = 0.05
     polar_ax= fig.add_axes([0.58 - size_param, 0.68 - size_param, 0.2 + size_param, 0.2 + size_param], projection = "polar")
-    polar_ax.pcolormesh(phi,rho,z,edgecolors='face', cmap ="Greys_r", vmin = -2*np.pi, vmax = 2*np.pi)
+    polar_ax.pcolormesh(phi,rho,z,edgecolors='face', vmin = -2*np.pi, vmax = 2*np.pi)
     polar_ax.grid(False)
     polar_ax.set_xticklabels([])
     polar_ax.set_yticklabels([])
     plt.colorbar(label='Intensity (Normalized)')
     if not(file_name is None):
-        plt.savefig(f"benchmarking_figures/{file_name}.png", bbox_inches = "tight")
+        plt.savefig(f"figures/{file_name}.png", bbox_inches = "tight")
     plt.show()
 
 def many_composite(fig, axs, x, y, intensity_maps, z_maps, alpha, vmin = -2*np.pi, vmax = 2*np.pi, is_edge = False, is_horizontal = True):
