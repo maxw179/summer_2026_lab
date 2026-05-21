@@ -78,6 +78,28 @@ def get_allowed_modes(min_order, max_order):
                 modes.append([m,n ])
     return modes
 
+def zernike_RMS(z_1, z_2, alpha, n=100):
+        x = np.linspace(-1, 1, n)
+        y = np.linspace(-1, 1, n)
+
+        x_grid, y_grid = np.meshgrid(x, y, indexing="xy")
+        rho_grid = np.sqrt(x_grid**2 + y_grid**2)
+        phi_grid = np.arctan2(y_grid, x_grid)
+
+        mask = rho_grid <= 1.0
+        theta_grid = np.arcsin(rho_grid * np.sin(alpha))
+
+        z_1_out = z_1(theta_grid[mask], phi_grid[mask])
+        z_2_out = z_2(theta_grid[mask], phi_grid[mask])
+
+        # difference in "waves"
+        dz = (z_1_out - z_2_out)
+
+        ## wrap to [-0.5, 0.5) waves (shortest phase difference)
+        #dz_wrapped = ((dz + 0.5) % 1.0) - 0.5
+
+        return np.sqrt(np.mean(dz**2))
+
 def generate_random_aberration(seed, num_orders, scaling):
     rng = np.random.default_rng(seed)
     #don't do tilt or piston, set min_mode = 2

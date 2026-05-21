@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
+
 def plot_intensity(x, y, intensity_map, file_name = None):
     fig, ax = plt.subplots(figsize = (3.5, 3.5), dpi = 300)
     plt.imshow(intensity_map / np.max(intensity_map),
@@ -97,7 +98,7 @@ def zernike_plot(z_map, alpha, file_name = None):
         plt.savefig(f"{file_name}.png")
     plt.show()
 
-def composite_plot(x, y, intensity_map, z_map, alpha, file_name = None):
+def composite_plot(x, y, intensity_map, zmap, alpha, file_name = None):
     fig, ax = plt.subplots(dpi = 300)
     plt.imshow(intensity_map / np.max(intensity_map),
             extent=[x[0], x[-1], y[0], y[-1]],

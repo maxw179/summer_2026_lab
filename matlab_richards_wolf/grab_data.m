@@ -1,4 +1,4 @@
-%% acquire_aberration_series.m
+%% grab_data.m
 % Iterates over a list of aberrations and takes one image under each one.
 % Each aberration can contain multiple Zernike mode/strength pairs.
 
