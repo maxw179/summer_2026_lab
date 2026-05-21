@@ -77,11 +77,11 @@ def plot_many_intensity(axs, x, y, intensity_maps, is_edge = False, is_horizonta
             ax.set_ylabel("y [mm]")
             
 
-def zernike_plot(z_map, alpha, file_name = None):
+def zernike_plot(z_map, alpha, file_name = None, res = 500):
     fig = plt.figure(figsize = (4,2), dpi = 600)
 
-    rho = np.linspace(0, 1, 500)
-    phi = np.linspace(0, 2*np.pi, 500)
+    rho = np.linspace(0, 1, res)
+    phi = np.linspace(0, 2*np.pi, res)
     rho_grid, phi_grid = np.meshgrid(rho, phi, indexing="ij")  
     theta_grid = np.arcsin(rho_grid * np.sin(alpha))           
     z = z_map(theta_grid, phi_grid)                   
@@ -98,7 +98,7 @@ def zernike_plot(z_map, alpha, file_name = None):
         plt.savefig(f"{file_name}.png")
     plt.show()
 
-def composite_plot(x, y, intensity_map, zmap, alpha, file_name = None):
+def composite_plot(x, y, intensity_map, z_map, alpha, file_name = None):
     fig, ax = plt.subplots(dpi = 300)
     plt.imshow(intensity_map / np.max(intensity_map),
             extent=[x[0], x[-1], y[0], y[-1]],
@@ -169,7 +169,6 @@ def many_composite(fig, axs, x, y, intensity_maps, z_maps, alpha, vmin = -2*np.p
 
         polar_ax.pcolormesh(phi, rho, z,
                             shading='auto',
-                            cmap="Greys_r",
                             vmin=vmin, vmax=vmax)
         polar_ax.grid(False)
         polar_ax.set_xticklabels([])

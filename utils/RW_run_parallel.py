@@ -7,8 +7,6 @@ sys.path.append('../')
 sys.path.append('../utils')
 import RW_helpers
 
-
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Compute PSF intensity grid using multiprocessing."
@@ -129,7 +127,6 @@ def parse_args():
     )
 
     return parser.parse_args()
-
 
 def main():
     args = parse_args()
