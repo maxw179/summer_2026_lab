@@ -1,0 +1,15 @@
+# Ignore everything
+*
+
+# But keep folders searchable
+!*/
+
+# Keep selected file types
+!*.py
+!*.ipynb
+!*.m
+!*.pdf
+!*.png
+
+# Keep gitignore itself
+!.gitignore
