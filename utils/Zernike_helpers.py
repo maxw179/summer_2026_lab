@@ -68,8 +68,6 @@ def create_zernike_function(modes, strengths, alpha):
     
     return total_zernike_map
 
-
-
 def get_allowed_modes(min_order, max_order):
     modes = []
     for n in range(min_order, max_order):
@@ -163,11 +161,8 @@ def img_to_array(img_path, alpha):
         # Outside pupil disk, set to 0
         I = np.where(rho <= 1.0, I, 0.0)
 
-        # Convert intensity -> phase map (centered)
-        # center around 0 so background ~0 and bright tree positive
-        #I = I - np.mean(I[rho <= 1.0])
-        I = I/np.max(I) * 2*np.pi
-        I[I == 0] = -2*np.pi
+        #cconvert intensity -> phase map (centered)
+        I = (I/np.max(I)) * 2*np.pi
         return I
 
     return z_map

@@ -1,21 +1,31 @@
-from RW_helpers import *
-from Zernike_helpers import *
-from RW_helpers import *
+from utils.RW_helpers import *
+from utils.Zernike_helpers import *
 import numpy as np
 from scipy.signal import fftconvolve
 
-class PSF_Grid():
+class Grid():
     #L_ffp: FFP size [mm]
     #grid_ffp: number of grid points along each axis
-    def __init__(self, L_ffp, grid_ffp, z_level):
+    def __init__(self, L_ffp, grid_ffp, x_offset, y_offset, z_level):
         self.L_ffp = L_ffp 
         self.grid_ffp = grid_ffp
+        self.x_offset = x_offset
+        self.y_offset = y_offset
         self.z_level = z_level
 
     def get_xy(self):
         x = np.linspace(-self.L_ffp / 2, self.L_ffp / 2, self.grid_ffp)
         y = np.linspace(-self.L_ffp / 2, self.L_ffp / 2, self.grid_ffp)
         return x,y
+    
+    def get_grid(self):
+        x, y = self.get_xy()
+        return np.zeros((len(x), len(y)))
+
+
+class PSF_Grid(Grid):
+    def __init__(self, L_ffp, grid_ffp, z_level):
+        super().__init__(L_ffp, grid_ffp, 0.0, 0.0, z_level)
 
 class Aberration():
     def __init__(self, modes, strengths, alpha):
@@ -27,6 +37,7 @@ class Aberration():
         for i, mode in enumerate(self.modes):
             s += f"m={mode[0]}, n={mode[1]}: {np.round(self.strengths[i], 3)}"
         return s
+    
     def __add__(self, other):
         return Aberration(self.modes, self.strengths + other.strengths, self.alpha)
 
@@ -67,9 +78,11 @@ class Microscope():
 
 
     def compute_PSF(self, psf_grid, aberration):
-        x, y, I = parallel_grid_wrapper(
+        _, _, I = parallel_grid_wrapper(
             L_ffp = psf_grid.L_ffp,
             grid_ffp = psf_grid.grid_ffp,
+            x_offset = psf_grid.x_offset,
+            y_offset = psf_grid.y_offset,
             alpha = self.alpha,
             k = self.k,
             f = self.f,
@@ -78,13 +91,13 @@ class Microscope():
             R_BFP = self.r_bfp, 
             theta_grid_size = self.grid_bfp,
             N_order = self.N_order,
-            z = psf_grid.z,
+            z = psf_grid.z_level,
             prop_distance = 0 ,
             aberration_kind = "Zernike",
-            output = "parallel_output/psf_output.npz",
             params = [aberration.modes,
                       aberration.strengths]
         )
+        x, y = psf_grid.get_xy()
         return x, y, I
 
 def bead_img(psf_grid, xs, ys, bead_sizes):

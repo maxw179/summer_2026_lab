@@ -2,7 +2,11 @@
 import argparse
 import numpy as np
 import ast
+import sys
+sys.path.append('../')
+sys.path.append('../utils')
 import RW_helpers
+
 
 
 def parse_args():
@@ -23,7 +27,18 @@ def parse_args():
         required=True,
         help="Number of points along each axis in the x-y grid.",
     )
-
+    parser.add_argument(
+        "--x-offset",
+        type=float,
+        required=True,
+        help="Offset of the center along x [mm]",
+    )
+    parser.add_argument(
+        "--y-offset",
+        type=float,
+        required=True,
+        help="Offset of the center along y [mm]",
+    )
     #optical parameters
     parser.add_argument(
         "--alpha",
@@ -61,8 +76,7 @@ def parse_args():
         required=True,
         help="radius of back focal plane [mm].",
     )
-
-    # Integration grid + nonlinearity order
+    #integration grid + nonlinearity order
     parser.add_argument(
         "--theta-grid-size",
         type=int,
@@ -75,8 +89,7 @@ def parse_args():
         required=True,
         help="Order of nonlinearity (2 for 2P, 3 for 3P, etc.).",
     )
-
-    # Optional aberration map
+    #optional aberration map
     parser.add_argument(
         "--aberration-kind",
         type=str,
@@ -95,8 +108,6 @@ def parse_args():
         default=None,
         help="distance to propagate",
     )
-
-    # Misc
     parser.add_argument(
         "--n-procs",
         type=int,
@@ -127,6 +138,8 @@ def main():
     x, y, I = RW_helpers.intensity_grid_parallel(
         L_ffp=args.L_ffp,
         grid_ffp=args.grid_ffp,
+        x_offset=args.x_offset,
+        y_offset=args.y_offset,
         alpha=args.alpha,
         k=args.k,
         f=args.f,

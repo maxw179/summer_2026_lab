@@ -2,8 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-def plot_intensity(x, y, intensity_map, file_name = "intensity_map"):
-    fig, ax = plt.subplots(dpi = 300)
+def plot_intensity(x, y, intensity_map, file_name = None):
+    fig, ax = plt.subplots(figsize = (3.5, 3.5), dpi = 300)
     plt.imshow(intensity_map / np.max(intensity_map),
             extent=[x[0], x[-1], y[0], y[-1]],
         origin='lower',
@@ -12,12 +12,38 @@ def plot_intensity(x, y, intensity_map, file_name = "intensity_map"):
         vmax = 1,
         cmap='Greys_r')
     ax.grid(False)
-    plt.xticks(rotation=45)
-    plt.yticks(rotation=45)
+    step = (np.max(x) - np.min(x))/5
+    x_ticks = np.arange(np.min(x), np.max(x) + step, step)
+    y_ticks = np.arange(np.min(y), np.max(y) + step, step)
+    plt.xticks(x_ticks, rotation=45)
+    plt.yticks(y_ticks, rotation=45)
     ax.set_xlabel("x [mm]")
     ax.set_ylabel("y [mm]")
 
     plt.colorbar(label='Intensity (Normalized)')
+    plt.gca().set_aspect("equal")
+    if not(file_name is None):
+        plt.savefig(f"benchmarking_figures/{file_name}.png", bbox_inches = "tight")
+    
+    plt.show()
+
+def plot_intensity_unnorm(x, y, intensity_map, file_name = None):
+    fig, ax = plt.subplots(figsize = (3.5, 3.5), dpi = 300)
+    plt.imshow(intensity_map,
+            extent=[x[0], x[-1], y[0], y[-1]],
+        origin='lower',
+        aspect = "equal",
+        cmap='Greys_r')
+    ax.grid(False)
+    step = (np.max(x) - np.min(x))/5
+    x_ticks = np.arange(np.min(x), np.max(x) + step, step)
+    y_ticks = np.arange(np.min(y), np.max(y) + step, step)
+    plt.xticks(x_ticks, rotation=45)
+    plt.yticks(y_ticks, rotation=45)
+    ax.set_xlabel("x [mm]")
+    ax.set_ylabel("y [mm]")
+
+    plt.colorbar(label='Intensity (Unnormalized)')
     plt.gca().set_aspect("equal")
     if not(file_name is None):
         plt.savefig(f"benchmarking_figures/{file_name}.png", bbox_inches = "tight")
@@ -50,7 +76,7 @@ def plot_many_intensity(axs, x, y, intensity_maps, is_edge = False, is_horizonta
             ax.set_ylabel("y [mm]")
             
 
-def zernike_plot(z_map, alpha, file_name = "zernike_mode"):
+def zernike_plot(z_map, alpha, file_name = None):
     fig = plt.figure(figsize = (4,2), dpi = 600)
 
     rho = np.linspace(0, 1, 500)

@@ -1,14 +1,25 @@
 from multiprocessing import Pool, cpu_count, get_context
 from scipy.fft import fft2, ifft2, fftshift
 import numpy as np
+from pathlib import Path
 import subprocess
+import sys
+sys.path.append('../')
+sys.path.append('../utils')
 import Zernike_helpers
+import warnings
+warnings.filterwarnings('ignore', category=RuntimeWarning)
+
 
 """
 Gets the strength of the angular component of the Richards-Wolf integral. 
 Params:
     theta: the altitudinal angle (0 at the center, increases towards the edge)
     phi: the azimuthal angle
+Returns:
+    a_x: the x-component of the angular strength
+    a_y: the y-component of the angular strength
+    a_z: the z-component of the angular strength
 """
 def strength_angular(theta, phi):
     cosT = np.cos(theta)
@@ -25,31 +36,37 @@ def strength_angular(theta, phi):
 """
 Gets the amplitude of the Gaussian beam across the back focal plane
 Params:
-    theta: the altitudinal angle (0 at the center, increases towards the edge)
-    alpha: the maximum angle 
+    theta: the set of altitudinal angles (0 at the center, increases towards the edge) to compute the amplitude of the beam over
+    alpha: the maximum value of theta 
     mag: the magnification
     w_0: the beam waist [mm]
     R_BFP: the overall radius of the back focal plane
+Returns:
+    gaussian_amplitude: the amplitude of the gaussian beam at each value of theta
 """
 def gaussian_amplitude_theta(theta, alpha, mag, w_0, R_BFP):
     r_bfp = R_BFP * (np.sin(theta)/np.sin(alpha))
-    return np.exp(-1 *((r_bfp / (mag * w_0))**2))
+    gaussian_amplitude = np.exp(-1 *((r_bfp / (mag * w_0))**2))
+    return gaussian_amplitude
 
 """
 Gets the phase offset which goes into the exponential in the integral, neglecting external aberrations
 Params:
     k: the wavefector
-    x: the x-value of the point in the FFP we are evaluating the field at 
-    y: the x-value of the point in the FFP we are evaluating the field at 
-    z: the x-value of the point in the FFP we are evaluating the field at 
+    x: the x-value [mm] of the point in the FFP we are evaluating the field at 
+    y: the x-value [mm] of the point in the FFP we are evaluating the field at 
+    z: the x-value [mm] of the point in the FFP we are evaluating the field at 
     theta: the altitudinal angle (0 at the center, increases towards the edge) of the point in the BFP to be integrated over
     phi: the azimuthal angle of the point in the BFP to be integrated over
+Returns:
+    abb_free_phase: the phase term in the fourier integral, neglecting any external aberrations
 """
 def aberration_free_phase(k, x, y, z, theta, phi):
-    return \
+    abb_free_phase = \
         k * (x * np.sin(theta) * np.cos(phi)
         + y * np.sin(theta) * np.sin(phi)
         + z * np.cos(theta))
+    return abb_free_phase
 """
 Gets the kernel by which to propagate the wavefront in the angular spectrum approximation:
 Params:
@@ -57,6 +74,8 @@ Params:
     d: the distance between grid elements in real sace
     k: the wavevector
     z: the distance to be propagated
+Returns:
+    H: the propagation kernel
 """
 def prop_kernel(N, d, k, z):
 
@@ -83,6 +102,9 @@ Params:
     w_0: the Gaussian beam waist [mm]
     k: the wavevector
     prop_distance: the distance [mm] to propagate the aberrated wavefront over
+Returns:
+    U_xy: the propagated wavefront (aberration * gaussian beam) on an x-y grid
+    dx: the physical distance between points in U_xy
 """
 def propagate_wavefront(aberration_map, R_BFP, alpha, mag, w_0, k, prop_distance):
     N = 512
@@ -91,57 +113,81 @@ def propagate_wavefront(aberration_map, R_BFP, alpha, mag, w_0, k, prop_distance
     y = (np.arange(N) - N/2) * dx
     x, y = np.meshgrid(x, y, indexing="ij")
     rho =   np.sqrt(x**2 + y**2) / R_BFP
-    theta = np.asin(np.sin(alpha) * rho)
+    #sometimes this will complain and throw a runtime error for the points outside of the mask. however, this does not affect the calculations,
+    #since these points are disregarded anyway
+    theta = np.arcsin(np.sin(alpha) * rho)
     phi =   np.mod(np.arctan2(y, x), 2*np.pi)
 
     phase = np.exp(1j*aberration_map(theta, phi))
     gauss_amplitude = gaussian_amplitude_theta(theta, alpha, mag, w_0, R_BFP)
-    U0 = phase * gauss_amplitude
+    U_xy = phase * gauss_amplitude
     mask = np.where(x**2 + y**2 >= R_BFP**2)
-    U0[mask] = 0
+    U_xy[mask] = 0
 
     if prop_distance == 0:
-        return U0, dx
+        return U_xy, dx
 
-    U_k = fft2(U0)
-    H   = prop_kernel(U0.shape[0], dx, k, prop_distance)  
-    Uz  = ifft2(U_k * H)
+    U_k = fft2(U_xy)
+    H   = prop_kernel(U_xy.shape[0], dx, k, prop_distance)  
+    U_xy  = ifft2(U_k * H)
     mask = np.where(x**2 + y**2 >= R_BFP**2)
-    Uz[mask] = 0
-    return Uz, dx
+    U_xy[mask] = 0
+    return U_xy, dx
 
-
+"""
+Samples a map on an x-y grid onto a user-provided theta/phi grid.
+Params:
+    U_xy: the map on an x-y grid. the grid is assumed to have equal dimensions/spacing on both axes
+    dx: the physical spacing between grid points in U_xy
+    theta_grid: the grid of theta values to sample over
+    phi_grid: the grid of phi values to sample over
+    alpha: the maximum allowed value of theta
+    R_BFP: the radius of the back focal plane
+Returns:
+    interpolated_values: the samples of the x-y grid on the theta/phi grid
+"""
 def sample_xy_to_theta_phi(U_xy, dx, theta_grid, phi_grid, alpha, R_BFP):
-
     N = U_xy.shape[0]
-
+    #find the corresponding x/y values of the theta/phi values
     r = R_BFP * (np.sin(theta_grid) / np.sin(alpha))
     x = r * np.cos(phi_grid)
     y = r * np.sin(phi_grid)
-
+    #convert x/y to dimensionless values, u and v
     u = x / dx + N/2
     v = y / dx + N/2
-
+    #round u/v to the nearest indices on the grid, i0, i1, j0, j1
     i0 = np.floor(u).astype(int) % N
     j0 = np.floor(v).astype(int) % N
     i1 = (i0 + 1) % N
     j1 = (j0 + 1) % N
-
+    #find the weights of the points at the nearest indices
     du = u - np.floor(u)
     dv = v - np.floor(v)
-
+    #find the actual values of the points at the nearest indices
     U00 = U_xy[i0, j0]
     U10 = U_xy[i1, j0]
     U01 = U_xy[i0, j1]
     U11 = U_xy[i1, j1]
+    #compute a weighted average of the four points
+    interpolated_values = (1-du)*(1-dv)*U00 + du*(1-dv)*U10 + (1-du)*dv*U01 + du*dv*U11
+    
+    return interpolated_values
 
-    return (
-        (1-du)*(1-dv)*U00 +
-        du*(1-dv)*U10 +
-        (1-du)*dv*U01 +
-        du*dv*U11
-    )
-
+"""
+Caches values of importance for the Richards-Wolf integration, to be passed to the integrator
+Params:
+    alpha: the maximum value of theta 
+    k: the wavevector value
+    mag: the magnification
+    w_0: the beam waist [mm]
+    R_BFP: the overall radius of the back focal plane
+    prop_dsitance: the distance [mm] to propagate the aberration by before computing the PSF
+    n_theta: the number of theta grid points to compute the integration over 
+    n_phi: the number of phi grid points to compute the integration over 
+    aberration_map: a function which takes in (theta, phi) and returns a complex phase
+Returns:
+    cache: a set of a values of importance for the Richards-Wolf integration
+"""
 def make_pupil_cache(alpha, k, f, mag, w_0, R_BFP, prop_distance,
                      n_theta=128, n_phi=128,
                      aberration_map=None):
@@ -162,14 +208,8 @@ def make_pupil_cache(alpha, k, f, mag, w_0, R_BFP, prop_distance,
 
     #get the factors out in front
     pre_factor = -1j * k * f / (2 * np.pi)
-    #get the actual wavefront
-    #gaussian_amp = gaussian_amplitude(theta_grid, alpha, mag, w_0, R_BFP)
-    #precompute aberration phase on the pupil grid
-    aberration_phase = 0.0
-    #if aberration_map is not None:
-    #    aberration_phase = aberration_map(theta_grid, phi_grid)
-    #propagate the wavefront
-    #wavefront = gaussian_amp * np.exp(1j * aberration_phase)
+    
+    #get the actual wavefront. the propagation will not do anything if prop_distance == 0 (default)
     Uxy, dx = propagate_wavefront(aberration_map, R_BFP, alpha, mag, w_0, k, prop_distance)
     wavefront = sample_xy_to_theta_phi(Uxy, dx, theta_grid, phi_grid, alpha, R_BFP)
 
@@ -179,7 +219,7 @@ def make_pupil_cache(alpha, k, f, mag, w_0, R_BFP, prop_distance,
     a_x, a_y, a_z = strength_angular(theta_grid, phi_grid)
 
 
-    return {
+    cache =  {
         "theta_grid": theta_grid,
         "phi_grid": phi_grid,
         "d_theta": d_theta,
@@ -190,10 +230,22 @@ def make_pupil_cache(alpha, k, f, mag, w_0, R_BFP, prop_distance,
         "a_x": a_x,
         "a_y": a_y,
         "a_z": a_z,
-        "aberration_phase": aberration_phase,
     }
+    return cache
 
-
+"""
+Uses a set of cached values to integrate the PSF at a point x, y, z
+Params:
+    x: the x-value [mm] of the point in the FFP we are evaluating the field at 
+    y: the x-value [mm] of the point in the FFP we are evaluating the field at 
+    z: the x-value [mm] of the point in the FFP we are evaluating the field at 
+    k: the wavefector
+    cache: a set of precomputed values that facilitate the integration
+Returns:
+    E_x: the value of the electric field at (x,y,z) along the x-direction
+    E_y: the value of the electric field at (x,y,z) along the y-direction
+    E_x: the value of the electric field at (x,y,z) along the z-direction
+"""
 def E_integrate_cached(x, y, z, k, cache):
     theta_grid = cache["theta_grid"]
     phi_grid = cache["phi_grid"]
@@ -235,7 +287,7 @@ def row_intensity_helper(args):
     return row
 
 def intensity_grid_parallel(
-    L_ffp, grid_ffp,
+    L_ffp, grid_ffp, x_offset, y_offset,
     alpha, k, f, mag, w_0, R_BFP,
     theta_grid_size, N_order, z = 0, prop_distance = 0,
     aberration_kind=None,
@@ -246,8 +298,8 @@ def intensity_grid_parallel(
     if params is not None:
         params.append(alpha)
 
-    x = np.linspace(-L_ffp / 2, L_ffp / 2, grid_ffp)
-    y = np.linspace(-L_ffp / 2, L_ffp / 2, grid_ffp)
+    x = np.linspace(x_offset - L_ffp / 2, x_offset + L_ffp / 2, grid_ffp)
+    y = np.linspace(y_offset - L_ffp / 2, y_offset + L_ffp / 2, grid_ffp)
 
     #one task per row
     tasks = [
@@ -271,13 +323,15 @@ def intensity_grid_parallel(
 
     return x, y, np.flip(intensity_map.T)
 
-def parallel_grid_wrapper(L_ffp, grid_ffp, alpha, k, f, mag, w_0, R_BFP, theta_grid_size, N_order,
-                          z = 0, prop_distance = 0, aberration_kind=None, output="psf_output.npz", params=None, python_executable="python",
-                          script_path="RW_run_parallel.py"):
+def parallel_grid_wrapper(L_ffp, grid_ffp, x_offset, y_offset, alpha, k, f, mag, w_0, R_BFP, theta_grid_size, N_order,
+                          z = 0, prop_distance = 0, aberration_kind=None, output= Path(__file__).resolve().parent / "parallel_output/psf_output.npz", params=None, python_executable="python",
+                          script_path = Path(__file__).resolve().parent / "RW_run_parallel.py"):
     cmd = [
         python_executable, script_path,
         "--L-ffp", str(L_ffp),
         "--grid-ffp", str(grid_ffp),
+        "--x-offset", str(x_offset),
+        "--y-offset", str(y_offset),
         "--alpha", str(alpha),
         "--k", str(k),
         "--f", str(f),
@@ -299,28 +353,3 @@ def parallel_grid_wrapper(L_ffp, grid_ffp, alpha, k, f, mag, w_0, R_BFP, theta_g
 
     output_files = np.load(output)
     return output_files["x"], output_files["y"], output_files["I"]
-
-
-# def intensity_grid(L_ffp, grid_ffp, alpha, k, f, w_0, mag, R_BFP, N_order, theta_grid_size, aberration_map=None):
-#     x = np.linspace(-L_ffp / 2, L_ffp / 2, grid_ffp)
-#     y = np.linspace(-L_ffp / 2, L_ffp / 2, grid_ffp)
-#     intensity_map = np.zeros((len(x), len(y)))
-
-#     #build cache once for the worker
-#     cache = make_pupil_cache(
-#         alpha=alpha, k=k, f=f, w_0 = w_0, mag=mag, R_BFP = R_BFP,
-#         n_theta=theta_grid_size, n_phi=theta_grid_size,
-#         aberration_map=aberration_map
-#     )
-
-#     for i in range(len(x)):
-#         for j in range(len(y)):
-#             x_p = x[i]
-#             y_p = y[j]
-#             #get the integrated electric field (with cached pupil)
-#             E_x, E_y, E_z = E_integrate_cached(x_p, y_p, 0.0, k, cache)
-#             I1 = np.abs(E_x) ** 2 + np.abs(E_y) ** 2 + np.abs(E_z) ** 2
-#             I_np = I1 ** N_order
-#             intensity_map[i, j] = I_np
-
-#     return x, y, np.flip(intensity_map.T)
