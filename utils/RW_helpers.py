@@ -287,7 +287,7 @@ def row_intensity_helper(args):
     return row
 
 def intensity_grid_parallel(
-    L_ffp, grid_ffp, x_offset, y_offset,
+    L_ffp_x, L_ffp_y, grid_ffp_x, grid_ffp_y, x_offset, y_offset,
     alpha, k, f, mag, w_0, R_BFP,
     theta_grid_size, N_order, z = 0, prop_distance = 0,
     aberration_kind=None,
@@ -298,8 +298,8 @@ def intensity_grid_parallel(
     if params is not None:
         params.append(alpha)
 
-    x = np.linspace(x_offset - L_ffp / 2, x_offset + L_ffp / 2, grid_ffp)
-    y = np.linspace(y_offset - L_ffp / 2, y_offset + L_ffp / 2, grid_ffp)
+    x = np.linspace(x_offset - L_ffp_x / 2, x_offset + L_ffp_x / 2, grid_ffp_x)
+    y = np.linspace(y_offset - L_ffp_y / 2, y_offset + L_ffp_y / 2, grid_ffp_y)
 
     #one task per row
     tasks = [
@@ -323,13 +323,15 @@ def intensity_grid_parallel(
 
     return x, y, np.flip(intensity_map.T)
 
-def parallel_grid_wrapper(L_ffp, grid_ffp, x_offset, y_offset, alpha, k, f, mag, w_0, R_BFP, theta_grid_size, N_order,
+def parallel_grid_wrapper(L_ffp_x, L_ffp_y, grid_ffp_x, grid_ffp_y, x_offset, y_offset, alpha, k, f, mag, w_0, R_BFP, theta_grid_size, N_order,
                           z = 0, prop_distance = 0, aberration_kind=None, output= Path(__file__).resolve().parent / "parallel_output/psf_output.npz", params=None, python_executable="python",
                           script_path = Path(__file__).resolve().parent / "RW_run_parallel.py"):
     cmd = [
         python_executable, script_path,
-        "--L-ffp", str(L_ffp),
-        "--grid-ffp", str(grid_ffp),
+        "--L-ffp-x", str(L_ffp_x),
+        "--L-ffp-y", str(L_ffp_y),
+        "--grid-ffp-x", str(grid_ffp_x),
+        "--grid-ffp-y", str(grid_ffp_y),
         "--x-offset", str(x_offset),
         "--y-offset", str(y_offset),
         "--alpha", str(alpha),

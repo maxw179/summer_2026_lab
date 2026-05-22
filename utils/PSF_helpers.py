@@ -3,44 +3,64 @@ from utils.Zernike_helpers import *
 import numpy as np
 from scipy.signal import fftconvolve
 
-class Grid():
-    def __init__(self, 
-                 L_ffp: float, 
-                 grid_ffp: int, 
+class Arbitrary_Grid():
+    def __init__(self,
+                 L_ffp_x: float,
+                 L_ffp_y: float,
+                 grid_ffp_x: int, 
+                 grid_ffp_y: int, 
                  x_offset: float, 
                  y_offset: float,
                  z_level: float):
-        self.L_ffp = L_ffp 
-        self.grid_ffp = grid_ffp
+        self.L_ffp_x = L_ffp_x
+        self.L_ffp_y = L_ffp_y
+        self.grid_ffp_x = grid_ffp_x
+        self.grid_ffp_y = grid_ffp_y
         self.x_offset = x_offset
         self.y_offset = y_offset
         self.z_level = z_level
 
     def get_xy(self):
-        x = np.linspace(-self.L_ffp / 2, self.L_ffp / 2, self.grid_ffp)
-        y = np.linspace(-self.L_ffp / 2, self.L_ffp / 2, self.grid_ffp)
+        x = np.linspace(-self.L_ffp_x / 2, self.L_ffp_x / 2, self.grid_ffp_x)
+        y = np.linspace(-self.L_ffp_y / 2, self.L_ffp_y / 2, self.grid_ffp_y)
         return x,y
     
     def get_grid(self):
         x, y = self.get_xy()
         return np.zeros((len(x), len(y)))
 
-class Centered_Grid(Grid):
+class Square_Grid(Arbitrary_Grid):
+    def __init__(self, 
+                 L_ffp: float, 
+                 grid_ffp: int, 
+                 x_offset: float, 
+                 y_offset: float,
+                 z_level: float):
+        super().__init__(L_ffp, L_ffp, grid_ffp, grid_ffp, x_offset, y_offset, z_level)
+    
+
+class Centered_Square_Grid(Square_Grid):
     def __init__(self, L_ffp, grid_ffp, z_level):
         super().__init__(L_ffp, grid_ffp, 0.0, 0.0, z_level)
 
-class Image_Mask(Grid):   
+class Image_Mask(Arbitrary_Grid):   
     def __init__(self,
-                 grid: Grid,
+                 grid: Arbitrary_Grid,
                  image_mask: np.array):
-        super().__init__(grid.L_ffp, grid.grid_ffp, grid.x_offset, grid.y_offset, grid.z_level)
+        super().__init__(grid.L_ffp_x, 
+                         grid.L_ffp_y, 
+                         grid.grid_ffp_x, 
+                         grid.grid_ffp_y,
+                         grid.x_offset, 
+                         grid.y_offset, 
+                         grid.z_level)
         self.image_mask = image_mask 
         if np.shape(self.image_mask) != np.shape(self.get_grid()):
             raise RuntimeError("Shape of the image mask differs from the L_ffp, grid_ffp parameters.")
 
 class Bead_Image(Image_Mask):
     def __init__(self, 
-                 grid: Grid,
+                 grid: Arbitrary_Grid,
                  xs: list, 
                  ys: list, 
                  bead_sizes: list):
@@ -137,11 +157,13 @@ class Microscope():
 
 
     def compute_PSF(self, 
-                    grid: Grid, 
+                    grid: Arbitrary_Grid, 
                     aberration: Aberration):
         _, _, I = parallel_grid_wrapper(
-            L_ffp = grid.L_ffp,
-            grid_ffp = grid.grid_ffp,
+            L_ffp_x = grid.L_ffp_x,
+            L_ffp_y = grid.L_ffp_y,
+            grid_ffp_x = grid.grid_ffp_x,
+            grid_ffp_y = grid.grid_ffp_y,
             x_offset = grid.x_offset,
             y_offset = grid.y_offset,
             alpha = self.alpha,
@@ -167,32 +189,35 @@ class Microscope():
         x, y, PSF = self.compute_PSF(image, aberration)
         return x, y, psf_convolve(image.image_mask, PSF)
 
-def bead_img(grid: Grid, 
+def bead_img(grid: Arbitrary_Grid, 
              xs: list, 
              ys: list, 
              bead_sizes: list):
     if not (len(xs) == len(ys) == len(bead_sizes)):
         raise RuntimeError("xs, ys, and bead_sizes must have the same length.")
 
-    length = grid.L_ffp
-    num_pixels = grid.grid_ffp
+    length_x = grid.L_ffp_x
+    num_pixels_x = grid.grid_ffp_x
 
-    x = np.linspace(-length/2, length/2, num_pixels)
-    y = np.linspace(-length/2, length/2, num_pixels)
-    img = np.zeros((num_pixels, num_pixels))
-    center = int(num_pixels/2)
+    length_y = grid.L_ffp_y
+    num_pixels_y = grid.grid_ffp_y
+
+    x, y = grid.get_xy()
+    img = np.zeros((num_pixels_x, num_pixels_y))
+    center_x = int(num_pixels_x/2)
+    center_y = int(num_pixels_y/2)
     for k in range(len(xs)):
         x_center = xs[k]
         y_center = ys[k]
         bead_size = bead_sizes[k]
-        for i in range(num_pixels):
-            for j in range(num_pixels):
-                x_img = (j - center) * (length/num_pixels)
-                y_img = (i - center) * (length/num_pixels)
+        for i in range(num_pixels_x):
+            for j in range(num_pixels_y):
+                x_img = (i - center_x) * (length_x/num_pixels_x)
+                y_img = (j - center_y) * (length_y/num_pixels_y)
 
                 distance = np.sqrt((x_center - x_img)**2 + (y_center - y_img)**2)
                 if distance <= bead_size:
-                    img[i, j] = 1
+                    img[j, i] = 1
     return x, y, img
 
 def psf_convolve(image, psf):

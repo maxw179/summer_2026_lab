@@ -1,7 +1,7 @@
 import numpy as np 
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-
+import matplotlib as mpl
 
 def plot_intensity(x, y, intensity_map, file_name = None):
     fig, ax = plt.subplots(figsize = (3.5, 3.5), dpi = 300)
@@ -77,27 +77,42 @@ def plot_many_intensity(axs, x, y, intensity_maps, is_edge = False, is_horizonta
             ax.set_ylabel("y [mm]")
             
 
-def zernike_plot(z_map, alpha, file_name = None, res = 500):
-    fig = plt.figure(figsize = (4,2), dpi = 600)
+def zernike_plot(z_map, alpha, file_name=None, res=500):
+    fig = plt.figure(figsize=(2, 3), dpi=600)
 
     rho = np.linspace(0, 1, res)
     phi = np.linspace(0, 2*np.pi, res)
-    rho_grid, phi_grid = np.meshgrid(rho, phi, indexing="ij")  
-    theta_grid = np.arcsin(rho_grid * np.sin(alpha))           
-    z = z_map(theta_grid, phi_grid)                   
-    polar_ax= fig.add_axes([0.1, 0.1, 0.8, 0.8], projection = "polar")
-    pcm = polar_ax.pcolormesh(phi,rho,z,edgecolors='face', vmin = -4, vmax = 4)
+    rho_grid, phi_grid = np.meshgrid(rho, phi, indexing="ij")
+    theta_grid = np.arcsin(rho_grid * np.sin(alpha))
+    z = z_map(theta_grid, phi_grid)
+
+    polar_ax = fig.add_axes([0.1, 0.25, 0.8, 0.7], projection="polar")
+
+    pcm = polar_ax.pcolormesh(
+        phi, rho, z,
+        edgecolors="face",
+        vmin=-np.pi,
+        vmax=np.pi,
+        cmap="plasma"
+    )
+
     polar_ax.grid(False)
     polar_ax.set_xticklabels([])
     polar_ax.set_yticklabels([])
 
-    cbar = fig.colorbar(pcm, ax=polar_ax, pad=0.1)
+    cbar = fig.colorbar(
+        pcm,
+        ax=polar_ax,
+        orientation="horizontal",
+        pad=0.15,
+        fraction=0.08
+    )
     cbar.set_label("Phase (rad)")
 
-    if not(file_name is None):
-        plt.savefig(f"{file_name}.png")
-    plt.show()
+    if file_name is not None:
+        plt.savefig(f"{file_name}.png", bbox_inches="tight")
 
+    plt.show()
 def composite_plot(x, y, intensity_map, z_map, alpha, file_name = None):
     fig, ax = plt.subplots(dpi = 300)
     plt.imshow(intensity_map / np.max(intensity_map),
@@ -120,7 +135,8 @@ def composite_plot(x, y, intensity_map, z_map, alpha, file_name = None):
     z = z_map(theta_grid, phi_grid)                          
     size_param = 0.05
     polar_ax= fig.add_axes([0.58 - size_param, 0.68 - size_param, 0.2 + size_param, 0.2 + size_param], projection = "polar")
-    polar_ax.pcolormesh(phi,rho,z,edgecolors='face', vmin = -2*np.pi, vmax = 2*np.pi)
+    polar_ax.pcolormesh(phi,rho,z,edgecolors='face', vmin = -2*np.pi, vmax = 2*np.pi,
+                        cmap = "plasma")
     polar_ax.grid(False)
     polar_ax.set_xticklabels([])
     polar_ax.set_yticklabels([])

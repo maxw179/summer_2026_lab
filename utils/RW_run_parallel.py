@@ -14,16 +14,28 @@ def parse_args():
 
     #basic grid / region params
     parser.add_argument(
-        "--L-ffp",
+        "--L-ffp-x",
         type=float,
         required=True,
-        help="Field of view in the Fourier/focal plane (same units as x,y).",
+        help="Field of view in the Fourier/focal plane in x(same units as x,y).",
     )
     parser.add_argument(
-        "--grid-ffp",
+        "--L-ffp-y",
+        type=float,
+        required=True,
+        help="Field of view in the Fourier/focal plane  in y(same units as x,y).",
+    )
+    parser.add_argument(
+        "--grid-ffp-x",
         type=int,
         required=True,
-        help="Number of points along each axis in the x-y grid.",
+        help="Number of points along x in the x-y grid.",
+    )
+    parser.add_argument(
+        "--grid-ffp-y",
+        type=int,
+        required=True,
+        help="Number of points along y in the x-y grid.",
     )
     parser.add_argument(
         "--x-offset",
@@ -133,8 +145,10 @@ def main():
 
     #call the parallel PSF computation
     x, y, I = RW_helpers.intensity_grid_parallel(
-        L_ffp=args.L_ffp,
-        grid_ffp=args.grid_ffp,
+        L_ffp_x=args.L_ffp_x,
+        L_ffp_y=args.L_ffp_y,
+        grid_ffp_x=args.grid_ffp_x,
+        grid_ffp_y=args.grid_ffp_y,
         x_offset=args.x_offset,
         y_offset=args.y_offset,
         alpha=args.alpha,
