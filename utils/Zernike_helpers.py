@@ -189,3 +189,52 @@ def img_to_array(img_path, alpha):
 
     return z_map
     
+class Aberration:
+    def __init__(self, 
+                 modes: list, 
+                 strengths: list):
+        self.modes = modes
+        self.strengths = strengths
+
+    def __str__(self):
+        s = ""
+        for i, mode in enumerate(self.modes):
+            s += f"n={mode[0]}, m={mode[1]}: {np.round(self.strengths[i], 3)}\n"
+        return s.rstrip()
+    
+    def __add__(self, other):
+        new_modes = np.array(self.modes)
+        new_strengths = np.array(self.strengths)
+
+        for i, mode in enumerate(np.array(other.modes)):
+            matches = np.all(new_modes == mode, axis=1)
+
+            if np.any(matches):
+                new_strengths[matches] += other.strengths[i]
+            else:
+                new_modes = np.concatenate([new_modes, [mode]], axis=0)
+                new_strengths = np.concatenate([new_strengths, [other.strengths[i]]])
+
+        return Aberration(new_modes.tolist(), new_strengths.tolist())
+    
+    def __sub__(self, other):
+        new_modes = np.array(self.modes)
+        new_strengths = np.array(self.strengths)
+
+        for i, mode in enumerate(np.array(other.modes)):
+            matches = np.all(new_modes == mode, axis=1)
+
+            if np.any(matches):
+                new_strengths[matches] -= other.strengths[i]
+            else:
+                new_modes = np.concatenate([new_modes, [mode]], axis=0)
+                new_strengths = np.concatenate([new_strengths, [-other.strengths[i]]])
+
+        return Aberration(new_modes.tolist(), new_strengths.tolist())
+
+    def __len__(self):
+        return len(self.modes)
+
+    def construct_map(self, 
+                      alpha: float):
+        return create_zernike_function(self.modes, self.strengths, alpha)

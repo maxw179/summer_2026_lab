@@ -1,4 +1,5 @@
 from utils.RW_helpers import *
+from utils.RW_fast import *
 from utils.Zernike_helpers import *
 import numpy as np
 from scipy.signal import fftconvolve
@@ -67,55 +68,8 @@ class Bead_Image(Image_Mask):
         _, _, image_mask = bead_img(grid, xs, ys, bead_sizes)
         super().__init__(grid, image_mask)
 
-class Aberration:
-    def __init__(self, 
-                 modes: list, 
-                 strengths: list):
-        self.modes = modes
-        self.strengths = strengths
-
-    def __str__(self):
-        s = ""
-        for i, mode in enumerate(self.modes):
-            s += f"n={mode[0]}, m={mode[1]}: {np.round(self.strengths[i], 3)}\n"
-        return s.rstrip()
     
-    def __add__(self, other):
-        new_modes = np.array(self.modes)
-        new_strengths = np.array(self.strengths)
-
-        for i, mode in enumerate(np.array(other.modes)):
-            matches = np.all(new_modes == mode, axis=1)
-
-            if np.any(matches):
-                new_strengths[matches] += other.strengths[i]
-            else:
-                new_modes = np.concatenate([new_modes, [mode]], axis=0)
-                new_strengths = np.concatenate([new_strengths, [other.strengths[i]]])
-
-        return Aberration(new_modes.tolist(), new_strengths.tolist())
     
-    def __sub__(self, other):
-        new_modes = np.array(self.modes)
-        new_strengths = np.array(self.strengths)
-
-        for i, mode in enumerate(np.array(other.modes)):
-            matches = np.all(new_modes == mode, axis=1)
-
-            if np.any(matches):
-                new_strengths[matches] -= other.strengths[i]
-            else:
-                new_modes = np.concatenate([new_modes, [mode]], axis=0)
-                new_strengths = np.concatenate([new_strengths, [-other.strengths[i]]])
-
-        return Aberration(new_modes.tolist(), new_strengths.tolist())
-
-    def __len__(self):
-        return len(self.modes)
-
-    def construct_map(self, 
-                      alpha: float):
-        return create_zernike_function(self.modes, self.strengths, alpha)
     
 class EmptyAberration(Aberration):
     def __init__(self, 
@@ -156,7 +110,7 @@ class Microscope():
         self.alpha = np.arcsin(na_eff / n)
 
 
-    def compute_PSF(self, 
+    def old_compute_PSF(self, 
                     grid: Arbitrary_Grid, 
                     aberration: Aberration):
         _, _, I = parallel_grid_wrapper(
@@ -179,6 +133,31 @@ class Microscope():
             aberration_kind = "Zernike",
             params = [aberration.modes,
                       aberration.strengths]
+        )
+        x, y = grid.get_xy()
+        return x, y, I
+    
+    def compute_PSF(self,
+                    grid: Arbitrary_Grid, 
+                    aberration: Aberration):
+        
+        _, _, I = rw_fast(
+            L_ffp_x = grid.L_ffp_x,
+            L_ffp_y = grid.L_ffp_y,
+            grid_ffp_x = grid.grid_ffp_x,
+            grid_ffp_y = grid.grid_ffp_y,
+            x_offset = grid.x_offset,
+            y_offset = grid.y_offset,
+            alpha = self.alpha,
+            k = self.k,
+            f = self.f,
+            mag = self.mag, 
+            w_0 = self.w_0,
+            R_BFP = self.r_bfp, 
+            grid_bfp = self.grid_bfp,
+            N_order = self.N_order,
+            z = grid.z_level,
+            aberration = aberration
         )
         x, y = grid.get_xy()
         return x, y, I
@@ -217,7 +196,7 @@ def bead_img(grid: Arbitrary_Grid,
 
                 distance = np.sqrt((x_center - x_img)**2 + (y_center - y_img)**2)
                 if distance <= bead_size:
-                    img[j, i] = 1
+                    img[i, j] = 1
     return x, y, img
 
 def psf_convolve(image, psf):

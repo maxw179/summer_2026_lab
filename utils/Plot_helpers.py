@@ -113,6 +113,7 @@ def zernike_plot(z_map, alpha, file_name=None, res=500):
         plt.savefig(f"{file_name}.png", bbox_inches="tight")
 
     plt.show()
+    
 def composite_plot(x, y, intensity_map, z_map, alpha, file_name = None):
     fig, ax = plt.subplots(dpi = 300)
     plt.imshow(intensity_map / np.max(intensity_map),
@@ -147,9 +148,10 @@ def composite_plot(x, y, intensity_map, z_map, alpha, file_name = None):
 
 def many_composite(fig, axs, x, y, intensity_maps, z_maps, alpha, vmin = -2*np.pi, vmax = 2*np.pi, is_edge = False, is_horizontal = True):
     axs = np.ravel(axs)
-
+    v = max([np.max(i_map) for i_map in intensity_maps])
     for i, ax in enumerate(axs):
-        ax.imshow(intensity_maps[i] / np.max(intensity_maps[i]),
+        ax.imshow(intensity_maps[i],
+                  vmax = v,
                   extent=[x[0], x[-1], y[0], y[-1]],
                   origin='lower',
                   aspect="equal",
