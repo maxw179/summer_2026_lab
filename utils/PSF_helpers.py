@@ -1,5 +1,6 @@
 from utils.RW_helpers import *
 from utils.RW_fast import *
+from utils.RW_fast_jax import *
 from utils.Zernike_helpers import *
 import numpy as np
 from scipy.signal import fftconvolve
@@ -109,6 +110,8 @@ class Microscope():
 
         self.alpha = np.arcsin(na_eff / n)
 
+        self.cache = 0
+
 
     def old_compute_PSF(self, 
                     grid: Arbitrary_Grid, 
@@ -158,6 +161,30 @@ class Microscope():
             N_order = self.N_order,
             z = grid.z_level,
             aberration = aberration
+        )
+        x, y = grid.get_xy()
+        return x, y, I
+    
+    def compute_PSF_jax(self,
+                    grid: Arbitrary_Grid, 
+                    aberration: Aberration,
+                    force_cache = True):
+        
+        if self.cache == 0 or force_cache:
+            self.cache = make_rw_cache(
+            grid.L_ffp_x, grid.L_ffp_y,
+            grid.grid_ffp_x, grid.grid_ffp_y,
+            grid.x_offset, grid.y_offset,
+            self.alpha, self.k, self.r_bfp,
+            self.grid_bfp)
+        
+        
+        _, _, I = rw_fast_jax_cached(
+            self.cache,
+            self.alpha, self.k, self.f, self.mag, self.w_0, self.r_bfp,
+            aberration,
+            self.N_order,
+            grid.z_level
         )
         x, y = grid.get_xy()
         return x, y, I

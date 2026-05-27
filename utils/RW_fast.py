@@ -127,7 +127,7 @@ def rw_fast(L_ffp_x, L_ffp_y, grid_ffp_x, grid_ffp_y, x_offset, y_offset,
     sx_1d = sx[:, 0]   # length grid_bfp
     sy_1d = sy[0, :]   # length grid_bfp
 
-    #Fourier/Richards-Wolf phase factors
+    #RW phase factors
     Ax = np.exp(1j * k * np.outer(x_ffp, sx_1d))
     Ay = np.exp(1j * k * np.outer(sy_1d, y_ffp))
 
