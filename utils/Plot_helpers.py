@@ -3,14 +3,18 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import matplotlib as mpl
 
-def plot_intensity(x, y, intensity_map, file_name = None):
+def plot_intensity(x, y, intensity_map, file_name = None, normalize = True, vmax = False):
     fig, ax = plt.subplots(figsize = (3.5, 3.5), dpi = 300)
-    plt.imshow(intensity_map / np.max(intensity_map),
+    if normalize:
+        intensity_map = intensity_map / np.max(intensity_map) 
+    if not(vmax):
+        vmax = np.max(intensity_map)
+    plt.imshow(intensity_map,
             extent=[x[0], x[-1], y[0], y[-1]],
         origin='lower',
         aspect = "equal",
-        vmin = 0,
-        vmax = 1,
+        vmin = np.min(intensity_map),
+        vmax = vmax,
         cmap='Greys_r')
     ax.grid(False)
     step = (np.max(x) - np.min(x))/5
@@ -20,8 +24,10 @@ def plot_intensity(x, y, intensity_map, file_name = None):
     plt.yticks(y_ticks, rotation=45)
     ax.set_xlabel("x [mm]")
     ax.set_ylabel("y [mm]")
-
-    plt.colorbar(label='Intensity (Normalized)')
+    if normalize:
+        plt.colorbar(label='Intensity (Normalized)')
+    else:
+        plt.colorbar(label='Intensity (Raw)')
     plt.gca().set_aspect("equal")
     if not(file_name is None):
         plt.savefig(f"figures/{file_name}.png", bbox_inches = "tight")

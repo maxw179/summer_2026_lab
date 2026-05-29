@@ -160,36 +160,36 @@ def rw_kernel_cached(
         R_BFP,
     )
 
-    # Complex BFP field
+    #complex BFP field
     U = gauss * np.exp(1j * phase_aberration)
     U = np.where(mask, U, 0.0 + 0.0j)
 
-    # Safe sz outside pupil
+    #safe sz outside pupil
     safe_sz = np.where(mask, sz, 1.0)
 
-    # z propagation phase
+    #z propagation phase
     z_phase = np.exp(1j * k * z * safe_sz)
 
-    # Apodization / RW factor
+    #apodization / RW factor
     inv_sqrt_sz = 1.0 / np.sqrt(safe_sz)
 
-    # Pupil integrands
+    #pupil integrands
     P_x = np.where(mask, U * a_x * inv_sqrt_sz * z_phase, 0.0 + 0.0j)
     P_y = np.where(mask, U * a_y * inv_sqrt_sz * z_phase, 0.0 + 0.0j)
     P_z = np.where(mask, U * a_z * inv_sqrt_sz * z_phase, 0.0 + 0.0j)
 
-    # Prefactors
+    #prefactors
     C = -1j * k * f / (2 * np.pi)
 
     ds_xy = (np.sin(alpha) / R_BFP) * dxy_bfp
     scale = C * ds_xy**2
 
-    # Compute RW integral
+    #compute RW integral
     E_x = scale * (Ax @ P_x @ Ay)
     E_y = scale * (Ax @ P_y @ Ay)
     E_z = scale * (Ax @ P_z @ Ay)
 
-    # Intensity
+    #intensity
     I1 = np.abs(E_x)**2 + np.abs(E_y)**2 + np.abs(E_z)**2
     I = I1**N_order
 

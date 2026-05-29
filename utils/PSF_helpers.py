@@ -1,4 +1,3 @@
-from utils.RW_helpers import *
 from utils.RW_fast import *
 from utils.RW_fast_jax import *
 from utils.Zernike_helpers import *
@@ -39,7 +38,6 @@ class Square_Grid(Arbitrary_Grid):
                  y_offset: float,
                  z_level: float):
         super().__init__(L_ffp, L_ffp, grid_ffp, grid_ffp, x_offset, y_offset, z_level)
-    
 
 class Centered_Square_Grid(Square_Grid):
     def __init__(self, L_ffp, grid_ffp, z_level):
@@ -68,9 +66,6 @@ class Bead_Image(Image_Mask):
                  bead_sizes: list):
         _, _, image_mask = bead_img(grid, xs, ys, bead_sizes)
         super().__init__(grid, image_mask)
-
-    
-    
     
 class EmptyAberration(Aberration):
     def __init__(self, 
@@ -87,7 +82,8 @@ class Microscope():
                  mag: float, 
                  w_0: float,
                  L_bfp: float,
-                 grid_bfp: int):
+                 grid_bfp: int,
+                 ):
         self.N_order = N_order 
         self.lambd =lambd
         self.n = n
@@ -95,104 +91,123 @@ class Microscope():
         self.f = f 
         self.mag = mag
         self.w_0 = w_0
-        
+        #the length of the back focal plane
         self.L_bfp = L_bfp
         self.grid_bfp = grid_bfp
-
         self.k = (2*n*np.pi)/lambd 
-        r_pupil = f * num_apt
-        self.r_bfp = L_bfp / 2
-
-        na_eff = num_apt
-        #effective NA can be limited by the size of the back focal plane
-        if self.r_bfp < r_pupil:
-            na_eff = self.r_bfp / f
-
-        self.alpha = np.arcsin(na_eff / n)
-
+        self.alpha = np.arcsin(num_apt / n)
         self.cache = 0
 
-
-    def old_compute_PSF(self, 
-                    grid: Arbitrary_Grid, 
-                    aberration: Aberration):
-        _, _, I = parallel_grid_wrapper(
-            L_ffp_x = grid.L_ffp_x,
-            L_ffp_y = grid.L_ffp_y,
-            grid_ffp_x = grid.grid_ffp_x,
-            grid_ffp_y = grid.grid_ffp_y,
-            x_offset = grid.x_offset,
-            y_offset = grid.y_offset,
+    def compute_phase_map(self, aberration):
+        return get_phase_map(
             alpha = self.alpha,
-            k = self.k,
-            f = self.f,
-            mag = self.mag, 
-            w_0 = self.w_0,
-            R_BFP = self.r_bfp, 
-            theta_grid_size = self.grid_bfp,
-            N_order = self.N_order,
-            z = grid.z_level,
-            prop_distance = 0 ,
-            aberration_kind = "Zernike",
-            params = [aberration.modes,
-                      aberration.strengths]
+            f = self.f, 
+            n = self.n, 
+            L_bfp = self.L_bfp, 
+            aberration = aberration, 
+            grid_bfp = self.grid_bfp
         )
-        x, y = grid.get_xy()
-        return x, y, I
+
+    def compute_pupil_function(self,
+                               aberration):
+        return get_pupil_function(
+            alpha=self.alpha,
+            mag=self.mag,
+            w_0=self.w_0,
+            f=self.f,
+            n=self.n,
+            L_bfp=self.L_bfp,
+            aberration=aberration,
+            grid_bfp=self.grid_bfp
+        )
     
+    def compute_scalar_h(self, 
+                         grid,
+                         aberration):
+        return get_scalar_h(
+            L_ffp_x=grid.L_ffp_x,
+            L_ffp_y=grid.L_ffp_y,
+            grid_ffp_x=grid.grid_ffp_x,
+            grid_ffp_y=grid.grid_ffp_y,
+            x_offset=grid.x_offset,
+            y_offset=grid.y_offset,
+            alpha=self.alpha,
+            k=self.k,
+            f=self.f,
+            n=self.n,
+            mag=self.mag,
+            w_0=self.w_0,
+            L_bfp=self.L_bfp,
+            aberration=aberration,
+            grid_bfp=self.grid_bfp
+        )
+
+    def compute_scalar_psf(self,
+                           grid,
+                           aberration):
+        h = self.compute_scalar_h(grid, aberration)
+        x, y = grid.get_xy()
+        return x, y, np.abs(h)**(2 * self.N_order)
+
     def compute_PSF(self,
                     grid: Arbitrary_Grid, 
                     aberration: Aberration):
         
         _, _, I = rw_fast(
-            L_ffp_x = grid.L_ffp_x,
-            L_ffp_y = grid.L_ffp_y,
-            grid_ffp_x = grid.grid_ffp_x,
-            grid_ffp_y = grid.grid_ffp_y,
-            x_offset = grid.x_offset,
-            y_offset = grid.y_offset,
-            alpha = self.alpha,
-            k = self.k,
-            f = self.f,
-            mag = self.mag, 
-            w_0 = self.w_0,
-            R_BFP = self.r_bfp, 
-            grid_bfp = self.grid_bfp,
-            N_order = self.N_order,
-            z = grid.z_level,
-            aberration = aberration
+            L_ffp_x=grid.L_ffp_x,
+            L_ffp_y=grid.L_ffp_y,
+            grid_ffp_x=grid.grid_ffp_x,
+            grid_ffp_y=grid.grid_ffp_y,
+            x_offset=grid.x_offset,
+            y_offset=grid.y_offset,
+            alpha=self.alpha,
+            k=self.k,
+            f=self.f,
+            n=self.n,
+            mag=self.mag, 
+            w_0=self.w_0,
+            L_bfp=self.L_bfp, 
+            aberration=aberration,
+            grid_bfp=self.grid_bfp,
+            N_order=self.N_order,
+            z=grid.z_level
         )
         x, y = grid.get_xy()
         return x, y, I
     
-    def compute_PSF_jax(self,
-                    grid: Arbitrary_Grid, 
-                    aberration: Aberration,
-                    force_cache = True):
+    #NEED TO UPDATE THIS FOR r_pupil/L_bfp
+    # def compute_PSF_jax(self,
+    #                 grid: Arbitrary_Grid, 
+    #                 aberration: Aberration,
+    #                 force_cache = True):
         
-        if self.cache == 0 or force_cache:
-            self.cache = make_rw_cache(
-            grid.L_ffp_x, grid.L_ffp_y,
-            grid.grid_ffp_x, grid.grid_ffp_y,
-            grid.x_offset, grid.y_offset,
-            self.alpha, self.k, self.r_bfp,
-            self.grid_bfp)
+    #     if self.cache == 0 or force_cache:
+    #         self.cache = make_rw_cache(
+    #         grid.L_ffp_x, grid.L_ffp_y,
+    #         grid.grid_ffp_x, grid.grid_ffp_y,
+    #         grid.x_offset, grid.y_offset,
+    #         self.alpha, self.k, self.r_bfp,
+    #         self.grid_bfp)
         
         
-        _, _, I = rw_fast_jax_cached(
-            self.cache,
-            self.alpha, self.k, self.f, self.mag, self.w_0, self.r_bfp,
-            aberration,
-            self.N_order,
-            grid.z_level
-        )
-        x, y = grid.get_xy()
-        return x, y, I
+    #     _, _, I = rw_fast_jax_cached(
+    #         self.cache,
+    #         self.alpha, self.k, self.f, self.mag, self.w_0, self.r_bfp,
+    #         aberration,
+    #         self.N_order,
+    #         grid.z_level
+    #     )
+    #     x, y = grid.get_xy()
+    #     return x, y, I
     
     def compute_image(self, 
                       image: Image_Mask, 
-                      aberration: Aberration):
-        x, y, PSF = self.compute_PSF(image, aberration)
+                      aberration: Aberration,
+                      mode = "vector"):
+        if mode == "vector":
+            x, y, PSF = self.compute_PSF(image, aberration)
+        else:
+            x, y, PSF = self.compute_scalar_psf(image, aberration)
         return x, y, psf_convolve(image.image_mask, PSF)
 
 def bead_img(grid: Arbitrary_Grid, 

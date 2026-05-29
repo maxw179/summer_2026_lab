@@ -116,8 +116,8 @@ class SLM():
         img = self.get_unaberrated_img()
         return quality(img)
     
-    def get_aberrated_img(self):
-        _, _, img = self.microscope.compute_image(self.image_mask, self.innate_aberration)
+    def get_aberrated_img(self, mode = "vector"):
+        _, _, img = self.microscope.compute_image(self.image_mask, self.innate_aberration, mode)
         return img
 
     def get_aberrated_quality(self):
@@ -125,8 +125,9 @@ class SLM():
         return quality(img)
     
     def get_corrected_img(self, 
-                          correction: Aberration):
-        _, _, img = self.microscope.compute_image(self.image_mask, self.innate_aberration + correction)
+                          correction: Aberration,
+                          mode = "vector"):
+        _, _, img = self.microscope.compute_image(self.image_mask, self.innate_aberration + correction, mode)
         return img
 
     def get_corrected_quality(self,
