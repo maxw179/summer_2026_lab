@@ -78,7 +78,9 @@ def get_allowed_modes(min_order, max_order):
                 modes.append([m,n ])
     return modes
 
-def zernike_RMS(z_1, z_2, alpha, n=100):
+def zernike_RMS(a_1, a_2, alpha, n=100):
+        z_1 = a_1.construct_map(alpha)
+        z_2 = a_2.construct_map(alpha)
         x = np.linspace(-1, 1, n)
         y = np.linspace(-1, 1, n)
 

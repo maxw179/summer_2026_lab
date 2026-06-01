@@ -10,6 +10,7 @@
 !*.m
 !*.pdf
 !*.png
+!*.npy
 
 # Keep gitignore itself
 !.gitignore
