@@ -84,7 +84,7 @@ def get_phase_map(alpha, f, n, L_bfp, aberration, grid_bfp):
     return Z
 
 
-def get_pupil_function(alpha, mag, w_0, f, n, L_bfp, aberration, grid_bfp):
+def get_pupil_function(alpha, mag, w_0, f, n, L_bfp, aberration, grid_bfp, gaussian = True):
     z_map = aberration.construct_map(alpha)
 
     #BFP grid is a square with length L_bfp
@@ -96,17 +96,20 @@ def get_pupil_function(alpha, mag, w_0, f, n, L_bfp, aberration, grid_bfp):
 
     #build the BFP field U
     U = np.zeros_like(x_bfp, dtype=complex)
-
-    gauss = gaussian_amplitude_s_perp(
-        mag,
-        w_0,
-        f,
-        n,
-        np.sqrt(sx**2 + sy**2)
-    )
-
     phase = np.exp(1j * z_map(theta[mask], phi[mask]))
-    U[mask] = gauss[mask] * phase
+    U[mask] = phase
+    if gaussian:
+        gauss = gaussian_amplitude_s_perp(
+            mag,
+            w_0,
+            f,
+            n,
+            np.sqrt(sx**2 + sy**2)
+        )
+
+        
+        U[mask] *= gauss[mask]
+
     return U
 
 def get_scalar_h(L_ffp_x, L_ffp_y, grid_ffp_x, grid_ffp_y, x_offset, y_offset,

@@ -66,6 +66,8 @@ class Bead_Image(Image_Mask):
                  bead_sizes: list):
         _, _, image_mask = bead_img(grid, xs, ys, bead_sizes)
         super().__init__(grid, image_mask)
+
+        
     
 class EmptyAberration(Aberration):
     def __init__(self, 
@@ -109,7 +111,8 @@ class Microscope():
         )
 
     def compute_pupil_function(self,
-                               aberration):
+                               aberration,
+                               gaussian = True):
         return get_pupil_function(
             alpha=self.alpha,
             mag=self.mag,
@@ -118,7 +121,8 @@ class Microscope():
             n=self.n,
             L_bfp=self.L_bfp,
             aberration=aberration,
-            grid_bfp=self.grid_bfp
+            grid_bfp=self.grid_bfp,
+            gaussian = gaussian
         )
     
     def compute_scalar_h(self, 
@@ -139,7 +143,7 @@ class Microscope():
             w_0=self.w_0,
             L_bfp=self.L_bfp,
             aberration=aberration,
-            grid_bfp=self.grid_bfp
+            grid_bfp=self.grid_bfp,
         )
 
     def compute_scalar_psf(self,
@@ -240,6 +244,21 @@ def bead_img(grid: Arbitrary_Grid,
                 if distance <= bead_size:
                     img[i, j] = 1
     return x, y, img
+
+def random_bead_img(grid, 
+                    num_beads,
+                    bead_size):
+    rng = np.random.default_rng(15)
+    x_max = grid.L_ffp_x/2
+    x_min = -grid.L_ffp_x/2
+    y_max = grid.L_ffp_y/2
+    y_min = -grid.L_ffp_y/2
+
+    xs = rng.uniform(x_min, x_max, num_beads)
+    ys = rng.uniform(y_min, y_max, num_beads)
+    bead_sizes = np.zeros(num_beads) + bead_size 
+    return bead_img(grid,xs, ys,bead_sizes)
+
 
 def psf_convolve(image, psf):
     psf_sum = np.sum(psf)
