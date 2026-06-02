@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import time
 
-from cupyx.scipy.fft import fft2, ifft2
+from scipy.fft import fft2, ifft2
 from scipy.fft import fftshift
 from scipy.fft import ifftshift
 
@@ -23,7 +23,7 @@ def forward_H(microscope: Microscope,
               aberration: Aberration):
     
     H = microscope.compute_pupil_function(aberration = aberration, 
-                                          gaussian = True) 
+                                          gaussian = False) 
     return H
 
 def forward_h(microscope: Microscope, 
@@ -246,11 +246,9 @@ def loop_optimize(n_loops: int,
     
     try:
         gamma                   = params["gamma"]
-        rate                    = params["rate"]
-        threshold               = params["threshold"]
-        threshold_damper        = params["threshold_damper"]
+        J_tol                   = params["J_tol"]
     except:
-        print("Error: please provide all parameters (gamma, rate, threshold, threshold_damper)")
+        print("Error: please provide all parameters (gamma, J_tol)")
         
 
     #initialize variables as necessary
@@ -268,7 +266,7 @@ def loop_optimize(n_loops: int,
     Z_stack = cache_Z_stack(microscope = microscope,
                            modes_corrected = modes_corrected)
 
-    for i in tqdm(range(1, n_loops + 1)):
+    for i in tqdm(range(n_loops)):
         cache = pre_compute_cache(microscope = microscope,
                                   D_stack = D_stack,
                                   Z_stack = Z_stack,
@@ -278,12 +276,11 @@ def loop_optimize(n_loops: int,
         J = objective(cache,
                       gamma = gamma)
         if debug:
-            print(f"Loop {i}: J = {np.round(J * 1e13, 4)}")
+            print(f"Loop {i + 1}: J = {np.round(J * 1e13, 4)}")
             print(f"Corrercted Zernike Mode: {modes_corrected}")
             print(f"Estimated Zernike Coefficients: {c_guess}")
 
         
-
         t = time.time()
         f_guess, F_guess = estimate_object(cache = cache,
                                            gamma = gamma)
@@ -307,17 +304,27 @@ def loop_optimize(n_loops: int,
         s = time.time()
         if debug:
             print(f"\t Estimated Hessian in {np.round(s-t, 3)} seconds")
-        update = -1 * np.matmul(np.linalg.inv(hessian), g_c) * rate
-        #threshold the update
-        update = np.clip(update, -threshold, threshold)
+        update = -1 * np.matmul(np.linalg.inv(hessian), g_c)
+  
         c_guess = c_guess + update
         a_guess = Aberration(modes_corrected, c_guess)
 
-        c_guess_log[i - 1] = c_guess 
-        F_guess_log[i - 1] = F_guess 
-        J_log[i - 1] = J
+        c_guess_log[i] = c_guess 
+        F_guess_log[i] = F_guess 
+        J_log[i] = J
 
-        threshold *= threshold_damper
+        #termination conditions
+        if i > 0:
+            #J increasing condition
+            J_stat = np.abs(J_log[i] - J_log[i-1])/np.abs(J_log[i-1] - J_log[0])
+            if J_stat < J_tol:
+
+                if log:
+                    return c_guess, F_guess, c_guess_log, F_guess_log, J_log 
+                else:
+                    return c_guess, F_guess
+                            
+
 
     if log:
         return c_guess, F_guess, c_guess_log, F_guess_log, J_log 

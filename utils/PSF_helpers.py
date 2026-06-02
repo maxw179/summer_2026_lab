@@ -66,13 +66,6 @@ class Bead_Image(Image_Mask):
                  bead_sizes: list):
         _, _, image_mask = bead_img(grid, xs, ys, bead_sizes)
         super().__init__(grid, image_mask)
-
-        
-    
-class EmptyAberration(Aberration):
-    def __init__(self, 
-                 modes: list = [[0,0]]):
-        super().__init__(modes, [0] * len(modes))
     
 class Microscope():
     def __init__(self, 

@@ -78,30 +78,6 @@ def get_allowed_modes(min_order, max_order):
                 modes.append([m,n ])
     return modes
 
-def zernike_RMS(a_1, a_2, alpha, n=100):
-        z_1 = a_1.construct_map(alpha)
-        z_2 = a_2.construct_map(alpha)
-        x = np.linspace(-1, 1, n)
-        y = np.linspace(-1, 1, n)
-
-        x_grid, y_grid = np.meshgrid(x, y, indexing="xy")
-        rho_grid = np.sqrt(x_grid**2 + y_grid**2)
-        phi_grid = np.arctan2(y_grid, x_grid)
-
-        mask = rho_grid <= 1.0
-        theta_grid = np.arcsin(rho_grid * np.sin(alpha))
-
-        z_1_out = z_1(theta_grid[mask], phi_grid[mask])
-        z_2_out = z_2(theta_grid[mask], phi_grid[mask])
-
-        # difference in "waves"
-        dz = (z_1_out - z_2_out)
-
-        ## wrap to [-0.5, 0.5) waves (shortest phase difference)
-        #dz_wrapped = ((dz + 0.5) % 1.0) - 0.5
-
-        return np.sqrt(np.mean(dz**2))
-
 def generate_random_aberration(seed, num_orders, scaling):
     rng = np.random.default_rng(seed)
     #don't do tilt or piston, set min_mode = 2
@@ -195,7 +171,12 @@ class Aberration:
     def __init__(self, 
                  modes: list, 
                  strengths: list):
+        #convert everything to lists
+        if isinstance(modes, np.ndarray):
+           modes = modes.tolist()
         self.modes = modes
+        if isinstance(strengths, np.ndarray):
+           strengths = strengths.tolist()
         self.strengths = strengths
 
     def __str__(self):
@@ -240,3 +221,49 @@ class Aberration:
     def construct_map(self, 
                       alpha: float):
         return create_zernike_function(self.modes, self.strengths, alpha)
+    
+class EmptyAberration(Aberration):
+    def __init__(self, 
+                 modes: list = [[0,0]]):
+        super().__init__(modes, [0] * len(modes))
+
+def get_johnson_modes():
+    modes = np.array([
+    [-2, 2], [0, 2], [2, 2],
+    [-3, 3], [-1, 3], [1, 3], [3, 3],
+    [-4, 4], [-2, 4], [0, 4], [2, 4], [4, 4],
+    [-5, 5], [-3, 5], [-1, 5], [1, 5], [3, 5]], dtype = int)
+    return modes
+
+def generate_johnson_aberration(RMS_desired, alpha, rng = np.random.default_rng()):
+    modes = get_johnson_modes()
+
+    strengths = rng.uniform(-1, 1, len(modes))
+    raw_johnson_aberration = Aberration(modes, strengths)
+    RMS_true = zernike_RMS(raw_johnson_aberration, alpha)
+    scaled_johnson_aberration = Aberration(modes, strengths * RMS_desired / RMS_true )
+    return scaled_johnson_aberration
+
+def zernike_RMS_difference(a_1, a_2, alpha, n=100):
+        z_1 = a_1.construct_map(alpha)
+        z_2 = a_2.construct_map(alpha)
+        x = np.linspace(-1, 1, n)
+        y = np.linspace(-1, 1, n)
+
+        x_grid, y_grid = np.meshgrid(x, y, indexing="xy")
+        rho_grid = np.sqrt(x_grid**2 + y_grid**2)
+        phi_grid = np.arctan2(y_grid, x_grid)
+
+        mask = rho_grid <= 1.0
+        theta_grid = np.arcsin(rho_grid * np.sin(alpha))
+
+        z_1_out = z_1(theta_grid[mask], phi_grid[mask])
+        z_2_out = z_2(theta_grid[mask], phi_grid[mask])
+
+        # difference in "waves"
+        dz = (z_1_out - z_2_out)
+
+        return np.sqrt(np.mean(dz**2))
+
+def zernike_RMS(a_1, alpha, n=100):
+    return zernike_RMS_difference(a_1, EmptyAberration(), alpha)
