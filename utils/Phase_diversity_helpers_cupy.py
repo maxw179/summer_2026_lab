@@ -14,6 +14,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import time
+import subprocess
 
 from scipy import fft as sp_fft
 
@@ -56,6 +57,70 @@ def _scalar(x):
 def _sync():
     if USE_CUPY:
         cp.cuda.Stream.null.synchronize()
+
+
+def _format_bytes(n):
+    return f"{n / 1024**2:.1f} MiB"
+
+
+def gpu_status(label="", *arrays, show_nvidia_smi=False):
+    print(f"\n[GPU DEBUG] {label}")
+
+    if not USE_CUPY:
+        print("[GPU DEBUG] USE_CUPY = False; this run is on CPU.")
+        return
+
+    _sync()
+
+    try:
+        device_id = cp.cuda.Device().id
+        props = cp.cuda.runtime.getDeviceProperties(device_id)
+        name = props["name"].decode() if isinstance(props["name"], bytes) else props["name"]
+        free_mem, total_mem = cp.cuda.runtime.memGetInfo()
+
+        print(f"[GPU DEBUG] USE_CUPY = True")
+        print(f"[GPU DEBUG] device_count = {cp.cuda.runtime.getDeviceCount()}")
+        print(f"[GPU DEBUG] active_device = {device_id}: {name}")
+        print(f"[GPU DEBUG] global_mem = used {_format_bytes(total_mem - free_mem)} / total {_format_bytes(total_mem)}")
+    except Exception as e:
+        print(f"[GPU DEBUG] Could not read CUDA device info: {e}")
+
+    try:
+        mempool = cp.get_default_memory_pool()
+        pinned = cp.get_default_pinned_memory_pool()
+        print(f"[GPU DEBUG] cupy_mempool = used {_format_bytes(mempool.used_bytes())}, cached {_format_bytes(mempool.total_bytes())}")
+        print(f"[GPU DEBUG] cupy_pinned_mempool = cached_blocks {pinned.n_free_blocks()}")
+    except Exception as e:
+        print(f"[GPU DEBUG] Could not read CuPy memory pool info: {e}")
+
+    for name, arr in arrays:
+        try:
+            arr_type = type(arr).__name__
+            shape = getattr(arr, "shape", None)
+            dtype = getattr(arr, "dtype", None)
+            device = getattr(arr, "device", "CPU / no .device attribute")
+            is_cupy = isinstance(arr, cp.ndarray)
+            print(f"[GPU DEBUG] {name}: type={arr_type}, cupy={is_cupy}, shape={shape}, dtype={dtype}, device={device}")
+        except Exception as e:
+            print(f"[GPU DEBUG] {name}: could not inspect array: {e}")
+
+    if show_nvidia_smi:
+        try:
+            out = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,name,utilization.gpu,memory.used,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            print("[GPU DEBUG] nvidia-smi:")
+            print(out.stdout.strip())
+        except Exception as e:
+            print(f"[GPU DEBUG] Could not run nvidia-smi: {e}")
+
 
 
 def fft2(x, *args, **kwargs):
@@ -372,8 +437,14 @@ def loop_optimize(n_loops: int,
     except:
         print("Error: please provide all parameters (gamma, J_tol)")
         
-    hessian_batch_size = params.get("hessian_batch_size", 4)
+    hessian_batch_size = params.get("hessian_batch_size", 16)
     log_F_guess = params.get("log_F_guess", log)
+    gpu_debug = params.get("gpu_debug", False)
+    gpu_debug_every = max(1, int(params.get("gpu_debug_every", 1)))
+    show_nvidia_smi = params.get("show_nvidia_smi", False)
+
+    if gpu_debug:
+        gpu_status("startup", show_nvidia_smi=show_nvidia_smi)
 
     #initialize variables as necessary
     a_guess = EmptyAberration()
@@ -391,12 +462,27 @@ def loop_optimize(n_loops: int,
     Z_stack = cache_Z_stack(microscope = microscope,
                            modes_corrected = modes_corrected)
 
+    if gpu_debug:
+        gpu_status("after D_stack/Z_stack cache",
+                   ("D_stack", D_stack),
+                   ("Z_stack", Z_stack),
+                   show_nvidia_smi=show_nvidia_smi)
+
     for i in tqdm(range(n_loops)):
+        do_gpu_debug = gpu_debug and (i % gpu_debug_every == 0)
         cache = pre_compute_cache(microscope = microscope,
                                   D_stack = D_stack,
                                   Z_stack = Z_stack,
                                   a_guess = a_guess,
                                   a_stack = a_stack)
+
+        if do_gpu_debug:
+            gpu_status(f"loop {i + 1}: after pre_compute_cache",
+                       ("H_stack", cache["H_stack"]),
+                       ("h_stack", cache["h_stack"]),
+                       ("S_stack", cache["S_stack"]),
+                       ("D_stack", cache["D_stack"]),
+                       show_nvidia_smi=show_nvidia_smi)
 
         J = objective(cache,
                       gamma = gamma)
@@ -412,6 +498,11 @@ def loop_optimize(n_loops: int,
         s = time.time()
         if debug:
             print(f"\t Estimated object in {np.round(s-t, 3)} seconds")
+        if do_gpu_debug:
+            gpu_status(f"loop {i + 1}: after estimate_object",
+                       ("f_guess", f_guess),
+                       ("F_guess", F_guess),
+                       show_nvidia_smi=show_nvidia_smi)
 
         t = time.time()
         g, g_c = estimate_aberration_gradient(microscope = microscope,
@@ -421,6 +512,11 @@ def loop_optimize(n_loops: int,
         s = time.time()
         if debug:
             print(f"\t Estimated gradient in {np.round(s-t, 3)} seconds")
+        if do_gpu_debug:
+            gpu_status(f"loop {i + 1}: after estimate_aberration_gradient",
+                       ("g", g),
+                       ("g_c", g_c),
+                       show_nvidia_smi=show_nvidia_smi)
 
         t = time.time()
         hessian = get_hessian(microscope = microscope,
@@ -431,6 +527,10 @@ def loop_optimize(n_loops: int,
         s = time.time()
         if debug:
             print(f"\t Estimated Hessian in {np.round(s-t, 3)} seconds")
+        if do_gpu_debug:
+            gpu_status(f"loop {i + 1}: after get_hessian",
+                       ("hessian", hessian),
+                       show_nvidia_smi=show_nvidia_smi)
 
         xp = _xp(hessian)
         update = -xp.linalg.solve(hessian, g_c).astype(xp.float32)
