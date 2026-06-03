@@ -53,74 +53,9 @@ def _scalar(x):
         return x.item()
     return x
 
-
 def _sync():
     if USE_CUPY:
         cp.cuda.Stream.null.synchronize()
-
-
-def _format_bytes(n):
-    return f"{n / 1024**2:.1f} MiB"
-
-
-def gpu_status(label="", *arrays, show_nvidia_smi=False):
-    print(f"\n[GPU DEBUG] {label}")
-
-    if not USE_CUPY:
-        print("[GPU DEBUG] USE_CUPY = False; this run is on CPU.")
-        return
-
-    _sync()
-
-    try:
-        device_id = cp.cuda.Device().id
-        props = cp.cuda.runtime.getDeviceProperties(device_id)
-        name = props["name"].decode() if isinstance(props["name"], bytes) else props["name"]
-        free_mem, total_mem = cp.cuda.runtime.memGetInfo()
-
-        print(f"[GPU DEBUG] USE_CUPY = True")
-        print(f"[GPU DEBUG] device_count = {cp.cuda.runtime.getDeviceCount()}")
-        print(f"[GPU DEBUG] active_device = {device_id}: {name}")
-        print(f"[GPU DEBUG] global_mem = used {_format_bytes(total_mem - free_mem)} / total {_format_bytes(total_mem)}")
-    except Exception as e:
-        print(f"[GPU DEBUG] Could not read CUDA device info: {e}")
-
-    try:
-        mempool = cp.get_default_memory_pool()
-        pinned = cp.get_default_pinned_memory_pool()
-        print(f"[GPU DEBUG] cupy_mempool = used {_format_bytes(mempool.used_bytes())}, cached {_format_bytes(mempool.total_bytes())}")
-        print(f"[GPU DEBUG] cupy_pinned_mempool = cached_blocks {pinned.n_free_blocks()}")
-    except Exception as e:
-        print(f"[GPU DEBUG] Could not read CuPy memory pool info: {e}")
-
-    for name, arr in arrays:
-        try:
-            arr_type = type(arr).__name__
-            shape = getattr(arr, "shape", None)
-            dtype = getattr(arr, "dtype", None)
-            device = getattr(arr, "device", "CPU / no .device attribute")
-            is_cupy = isinstance(arr, cp.ndarray)
-            print(f"[GPU DEBUG] {name}: type={arr_type}, cupy={is_cupy}, shape={shape}, dtype={dtype}, device={device}")
-        except Exception as e:
-            print(f"[GPU DEBUG] {name}: could not inspect array: {e}")
-
-    if show_nvidia_smi:
-        try:
-            out = subprocess.run(
-                [
-                    "nvidia-smi",
-                    "--query-gpu=index,name,utilization.gpu,memory.used,memory.total",
-                    "--format=csv,noheader,nounits",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            print("[GPU DEBUG] nvidia-smi:")
-            print(out.stdout.strip())
-        except Exception as e:
-            print(f"[GPU DEBUG] Could not run nvidia-smi: {e}")
-
 
 
 def fft2(x, *args, **kwargs):
@@ -181,7 +116,7 @@ def forward_PSF(microscope: Microscope,
 def circular_convolve(f: np.array, 
                       psf: np.array):
 
-    f = _asarray(f, dtype=_xp().float32 if USE_CUPY else np.float32)
+    f = _asarray(f, dtype=_xp().float64 if USE_CUPY else np.float64)
     psf = _asarray(psf)
     xp = _xp(f)
     S = fft2(ifftshift(psf))
@@ -219,7 +154,7 @@ def objective(cache,
     D_stack = cache["D_stack"]
     xp = _xp(S_stack)
 
-    gamma = xp.asarray(gamma, dtype=xp.float32)
+    gamma = xp.asarray(gamma, dtype=xp.float64)
     first_term = xp.sum(xp.abs(D_stack)**2)
 
     numerator = xp.abs(xp.sum(xp.conj(S_stack) * D_stack, axis=0))**2
@@ -230,14 +165,14 @@ def objective(cache,
 
 
 def cache_D_stack(d_stack: np.array):
-    D_stack = fft2(_asarray(d_stack, dtype=_xp().float32 if USE_CUPY else np.float32), axes = (-2, -1), workers = -1)
+    D_stack = fft2(_asarray(d_stack, dtype=_xp().float64 if USE_CUPY else np.float64), axes = (-2, -1), workers = -1)
     return D_stack.astype(_xp(D_stack).complex64)
 
 
 def cache_Z_stack(microscope: Microscope,
                   modes_corrected: np.array):
     Z_stack = _asarray([microscope.compute_phase_map(Aberration([m], [1.0])) for m in modes_corrected])
-    return Z_stack.astype(_xp(Z_stack).float32)
+    return Z_stack.astype(_xp(Z_stack).float64)
 
 
 
@@ -251,7 +186,7 @@ def pre_compute_cache(microscope: Microscope,
 
     H_stack = H_stack.astype(xp.complex64)
     h_stack = ifft2(H_stack, axes = (-2, -1), workers = -1).astype(xp.complex64)
-    s_stack = (xp.abs(h_stack)**(2 * microscope.N_order)).astype(xp.float32)
+    s_stack = (xp.abs(h_stack)**(2 * microscope.N_order)).astype(xp.float64)
     S_stack = fft2(s_stack, axes = (-2, -1), workers = -1).astype(xp.complex64)
 
     N = len(D_stack)
@@ -263,7 +198,7 @@ def pre_compute_cache(microscope: Microscope,
         "s_stack": s_stack,
         "D_stack": D_stack.astype(xp.complex64, copy=False),
         "a_stack": a_stack,
-        "Z_stack": Z_stack.astype(xp.float32, copy=False),
+        "Z_stack": Z_stack.astype(xp.float64, copy=False),
         "j_idx": j_idx,
         "k_idx": k_idx}
     
@@ -282,7 +217,7 @@ def estimate_object(cache: dict,
     S_stack = cache["S_stack"]
     D_stack = cache["D_stack"]
     xp = _xp(S_stack)
-    gamma = xp.asarray(gamma, dtype=xp.float32)
+    gamma = xp.asarray(gamma, dtype=xp.float64)
     
     #compute the estimator
     numerator = xp.sum(xp.conj(S_stack) * D_stack, axis = 0)
@@ -316,16 +251,16 @@ def estimate_aberration_gradient(microscope: Microscope,
     inner_product = h_abs_power * h_stack * xp.real(ifft2(V_stack, axes = (-2, -1), workers = -1))
 
     g_stack = xp.imag(xp.conj(H_stack) * fft2(inner_product, axes = (-2, -1), workers = -1)) 
-    g = (-2 * microscope.N_order * xp.sum(g_stack, axis = 0)).astype(xp.float32)
+    g = (-2 * microscope.N_order * xp.sum(g_stack, axis = 0)).astype(xp.float64)
     #get the component along each zernike
-    g_c = xp.einsum("yx,myx->m", g, Z_stack, optimize=True).astype(xp.float32)
+    g_c = xp.einsum("yx,myx->m", g, Z_stack, optimize=True).astype(xp.float64)
     return g, g_c
 
 
 def get_Q(S_stack: np.array,
           gamma: float):
     xp = _xp(S_stack)
-    gamma = xp.asarray(gamma, dtype=xp.float32)
+    gamma = xp.asarray(gamma, dtype=xp.float64)
     S_squared_stack = xp.abs(S_stack)**2
 
     return gamma + xp.sum(S_squared_stack, axis = 0)
@@ -344,7 +279,7 @@ def get_H_gn_phi_batch(Z_batch: np.array,
     Ny, Nx = h_stack.shape[-2:]
 
     if len(j_idx) == 0:
-        return xp.zeros((n_batch, Ny, Nx), dtype=xp.float32)
+        return xp.zeros((n_batch, Ny, Nx), dtype=xp.float64)
     
     h_abs_power = xp.abs(h_stack)**(2 * N_order - 2)
 
@@ -360,7 +295,7 @@ def get_H_gn_phi_batch(Z_batch: np.array,
     term_2 = xp.conj(H_stack[k_idx, None]) * fft2(inner_term_2, axes = (-2, -1), workers = -1)
 
     total = xp.sum(xp.imag(term_1 - term_2), axis = 0)
-    return (4 * N_order**2 * total).astype(xp.float32)
+    return (4 * N_order**2 * total).astype(xp.float64)
 
 
 #kept for compatibility; get_hessian now uses the batched version above
@@ -398,7 +333,7 @@ def get_hessian(microscope: Microscope,
     xp = _xp(S_stack)
 
     n_modes = len(Z_stack)
-    hessian_projected = xp.zeros((n_modes, n_modes), dtype=xp.float32)
+    hessian_projected = xp.zeros((n_modes, n_modes), dtype=xp.float64)
     N_order = microscope.N_order
 
     Q = get_Q(S_stack = S_stack,
@@ -419,7 +354,7 @@ def get_hessian(microscope: Microscope,
         hessian_projected[n0:n1] = xp.einsum("byx,myx->bm", H_gn_phi_batch, Z_stack, optimize=True)
 
     hessian = xp.triu(hessian_projected) + xp.triu(hessian_projected, k = 1).T
-    return hessian.astype(xp.float32)
+    return hessian.astype(xp.float64)
 
 
 def loop_optimize(n_loops: int,
@@ -437,57 +372,36 @@ def loop_optimize(n_loops: int,
     except:
         print("Error: please provide all parameters (gamma, J_tol)")
         
-    hessian_batch_size = params.get("hessian_batch_size", 16)
-    log_F_guess = params.get("log_F_guess", log)
-    gpu_debug = params.get("gpu_debug", False)
-    gpu_debug_every = max(1, int(params.get("gpu_debug_every", 1)))
-    show_nvidia_smi = params.get("show_nvidia_smi", False)
-
-    if gpu_debug:
-        gpu_status("startup", show_nvidia_smi=show_nvidia_smi)
-
     #initialize variables as necessary
     a_guess = EmptyAberration()
     F_guess = 0
-    c_guess = np.zeros(len(modes_corrected), dtype=np.float32)
+    c_guess = np.zeros(len(modes_corrected), dtype=np.float64)
 
     #initialize logs
     if log:
-        c_guess_log = np.zeros((n_loops, len(modes_corrected)), dtype=np.float32) if log else None
-        F_guess_log = np.zeros((n_loops, microscope.grid_bfp, microscope.grid_bfp), dtype=np.complex64) if (log and log_F_guess) else None
-    J_log = np.zeros(n_loops, dtype=np.float32) if log else np.zeros(n_loops, dtype=np.float32)
+        c_guess_log = np.zeros((n_loops, len(modes_corrected)), dtype=np.float64) 
+        F_guess_log = np.zeros((n_loops, microscope.grid_bfp, microscope.grid_bfp), dtype=np.complex64) 
+
+    J_log = np.zeros(n_loops, dtype=np.float64) if log else np.zeros(n_loops, dtype=np.float64)
 
     #cache the D stack and Z stack
     D_stack = cache_D_stack(d_stack)
     Z_stack = cache_Z_stack(microscope = microscope,
                            modes_corrected = modes_corrected)
 
-    if gpu_debug:
-        gpu_status("after D_stack/Z_stack cache",
-                   ("D_stack", D_stack),
-                   ("Z_stack", Z_stack),
-                   show_nvidia_smi=show_nvidia_smi)
 
     for i in tqdm(range(n_loops)):
-        do_gpu_debug = gpu_debug and (i % gpu_debug_every == 0)
         cache = pre_compute_cache(microscope = microscope,
                                   D_stack = D_stack,
                                   Z_stack = Z_stack,
                                   a_guess = a_guess,
                                   a_stack = a_stack)
 
-        if do_gpu_debug:
-            gpu_status(f"loop {i + 1}: after pre_compute_cache",
-                       ("H_stack", cache["H_stack"]),
-                       ("h_stack", cache["h_stack"]),
-                       ("S_stack", cache["S_stack"]),
-                       ("D_stack", cache["D_stack"]),
-                       show_nvidia_smi=show_nvidia_smi)
 
         J = objective(cache,
                       gamma = gamma)
         if debug:
-            print(f"Loop {i + 1}: J = {np.round(J * 1e13, 4)}")
+            print(f"Loop {i + 1}: J = {J}")
             print(f"Corrercted Zernike Mode: {modes_corrected}")
             print(f"Estimated Zernike Coefficients: {c_guess}")
 
@@ -498,11 +412,7 @@ def loop_optimize(n_loops: int,
         s = time.time()
         if debug:
             print(f"\t Estimated object in {np.round(s-t, 3)} seconds")
-        if do_gpu_debug:
-            gpu_status(f"loop {i + 1}: after estimate_object",
-                       ("f_guess", f_guess),
-                       ("F_guess", F_guess),
-                       show_nvidia_smi=show_nvidia_smi)
+
 
         t = time.time()
         g, g_c = estimate_aberration_gradient(microscope = microscope,
@@ -512,29 +422,23 @@ def loop_optimize(n_loops: int,
         s = time.time()
         if debug:
             print(f"\t Estimated gradient in {np.round(s-t, 3)} seconds")
-        if do_gpu_debug:
-            gpu_status(f"loop {i + 1}: after estimate_aberration_gradient",
-                       ("g", g),
-                       ("g_c", g_c),
-                       show_nvidia_smi=show_nvidia_smi)
 
         t = time.time()
         hessian = get_hessian(microscope = microscope,
                               cache = cache,
                               gamma = gamma,
-                              hessian_batch_size = hessian_batch_size)
+                              hessian_batch_size = 16)
         _sync()
         s = time.time()
         if debug:
             print(f"\t Estimated Hessian in {np.round(s-t, 3)} seconds")
-        if do_gpu_debug:
-            gpu_status(f"loop {i + 1}: after get_hessian",
-                       ("hessian", hessian),
-                       show_nvidia_smi=show_nvidia_smi)
+        update = -1 * np.linalg.solve(hessian, _asnumpy(g_c))
 
-        xp = _xp(hessian)
-        update = -xp.linalg.solve(hessian, g_c).astype(xp.float32)
-  
+        
+        # step_norm = np.linalg.norm(update)
+        # if step_norm > max_step:
+        #     update *= max_step / step_norm
+        
         c_guess = c_guess + _asnumpy(update)
         a_guess = Aberration(modes_corrected, c_guess)
 
@@ -549,15 +453,12 @@ def loop_optimize(n_loops: int,
             #J increasing condition
             denom = np.abs(J_log[i-1] - J_log[0])
             J_stat = np.inf if denom == 0 else np.abs(J_log[i] - J_log[i-1])/denom
-            if J_stat < J_tol:
-
+            if J_stat < J_tol or J_log[i] - J_log[i-1] > 0:
                 if log:
                     return c_guess, _asnumpy(F_guess), c_guess_log, F_guess_log, J_log 
                 else:
                     return c_guess, _asnumpy(F_guess)
-                            
-
-
+                        
     if log:
         return c_guess, _asnumpy(F_guess), c_guess_log, F_guess_log, J_log 
     else:

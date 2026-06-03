@@ -258,3 +258,7 @@ def psf_convolve(image, psf):
     if psf_sum == 0:
         raise RuntimeError("Cannot normalize PSF because its sum is zero.")
     return fftconvolve(image, psf / psf_sum, mode="same")
+
+def add_gaussian_noise(image, SNR, rng, percentile = 90):
+    sigma_noise = np.percentile(image, percentile) / SNR
+    return image + rng.normal(0, sigma_noise, image.shape)

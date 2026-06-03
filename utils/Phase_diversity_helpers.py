@@ -244,12 +244,10 @@ def loop_optimize(n_loops: int,
                   debug: bool,
                   log: bool):
     
-    try:
-        gamma                   = params["gamma"]
-        J_tol                   = params["J_tol"]
-    except:
-        print("Error: please provide all parameters (gamma, J_tol)")
-        
+
+    gamma                   = dict.get(params["gamma"], 1e-6)
+    J_tol                   = dict.get(params["J_tol"], 0.001)
+    l_m                     = dict.get(params["l_m"], 0)
 
     #initialize variables as necessary
     a_guess = EmptyAberration()
@@ -305,6 +303,9 @@ def loop_optimize(n_loops: int,
         if debug:
             print(f"\t Estimated Hessian in {np.round(s-t, 3)} seconds")
         update = -1 * np.matmul(np.linalg.inv(hessian), g_c)
+
+        H_damped = hessian + l_m * np.eye(len(hessian))
+        update = -np.linalg.solve(H_damped, g_c)
   
         c_guess = c_guess + update
         a_guess = Aberration(modes_corrected, c_guess)

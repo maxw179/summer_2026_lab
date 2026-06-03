@@ -78,20 +78,6 @@ def get_allowed_modes(min_order, max_order):
                 modes.append([m,n ])
     return modes
 
-def generate_random_aberration(seed, num_orders, scaling):
-    rng = np.random.default_rng(seed)
-    #don't do tilt or piston, set min_mode = 2
-    min_mode = 2
-    modes = get_allowed_modes(min_mode, num_orders + min_mode)
-    strengths = []
-    for mode in modes:
-        n = mode[1]
-        #prevent a division by 0 error
-        if n ==0: n = 1
-        strengths.append(rng.uniform(-scaling/np.sqrt(n), scaling/np.sqrt(n)))
-
-    return np.array(modes), np.array(strengths)
-
 #z_map takes in theta, phi
 def decompose_wavefront(z_map, alpha, decomp_order, n=100):
     x = np.linspace(-1, 1, n)
@@ -118,54 +104,6 @@ def decompose_wavefront(z_map, alpha, decomp_order, n=100):
         strengths.append(coeff/(2*np.pi))
 
     return modes, strengths
-
-def img_to_array(img_path, alpha):
-    img = Image.open(img_path)
-    img_array = np.array(img)
-    gray = img_array[:,:,0]
-    gray[gray >0] = 1
-    H, W = gray.shape
-
-    # Return a closure z_map(theta, phi)
-    def z_map(theta, phi):
-        # theta->rho mapping for your pupil
-        rho = np.sin(theta) / np.sin(alpha)
-
-        # pupil Cartesian coords in [-1,1]
-        x = rho * np.cos(phi)
-        y = rho * np.sin(phi)
-
-        # map (x,y) -> image coords (u,v) in [0, W-1]x[0, H-1]
-        # (x,y)=(-1,-1) -> bottom-left, (1,1) -> top-right
-        u = (x + 1) * 0.5 * (W - 1)
-        v = (1 - (y + 1) * 0.5) * (H - 1)  # flip y for image coordinates
-
-        # bilinear sampling
-        u0 = np.floor(u).astype(int)
-        v0 = np.floor(v).astype(int)
-        u1 = np.clip(u0 + 1, 0, W - 1)
-        v1 = np.clip(v0 + 1, 0, H - 1)
-        u0 = np.clip(u0, 0, W - 1)
-        v0 = np.clip(v0, 0, H - 1)
-
-        du = u - u0
-        dv = v - v0
-
-        I00 = gray[v0, u0]
-        I10 = gray[v0, u1]
-        I01 = gray[v1, u0]
-        I11 = gray[v1, u1]
-
-        I = (1-du)*(1-dv)*I00 + du*(1-dv)*I10 + (1-du)*dv*I01 + du*dv*I11
-
-        # Outside pupil disk, set to 0
-        I = np.where(rho <= 1.0, I, 0.0)
-
-        #cconvert intensity -> phase map (centered)
-        I = (I/np.max(I)) * 2*np.pi
-        return I
-
-    return z_map
     
 class Aberration:
     def __init__(self, 
@@ -227,6 +165,20 @@ class EmptyAberration(Aberration):
                  modes: list = [[0,0]]):
         super().__init__(modes, [0] * len(modes))
 
+
+class RMSAberration(Aberration):
+    def __init__(self,
+                 modes,
+                 raw_strengths,
+                 RMS_desired,
+                 alpha):
+        super().__init__(modes, raw_strengths)
+        RMS_val = zernike_RMS(self, alpha)
+        self.strengths = np.array([s * (RMS_desired / RMS_val) for s in self.strengths])
+
+def rescale_aberration(aberration, RMS_desired, alpha):
+    return RMSAberration(aberration.modes, aberration.strengths, RMS_desired, alpha)
+
 def get_johnson_modes():
     modes = np.array([
     [-2, 2], [0, 2], [2, 2],
@@ -241,7 +193,7 @@ def generate_johnson_aberration(RMS_desired, alpha, rng = np.random.default_rng(
     strengths = rng.uniform(-1, 1, len(modes))
     raw_johnson_aberration = Aberration(modes, strengths)
     RMS_true = zernike_RMS(raw_johnson_aberration, alpha)
-    scaled_johnson_aberration = Aberration(modes, strengths * RMS_desired / RMS_true )
+    scaled_johnson_aberration = Aberration(modes, [s * RMS_desired / RMS_true for s in strengths])
     return scaled_johnson_aberration
 
 def zernike_RMS_difference(a_1, a_2, alpha, n=100):
