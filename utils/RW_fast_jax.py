@@ -10,17 +10,14 @@ warnings.filterwarnings('ignore', category=RuntimeWarning)
 """
 Gets the amplitude of the Gaussian beam across the back focal plane
 Params:
-    theta: the set of altitudinal angles (0 at the center, increases towards the edge) to compute the amplitude of the beam over
-    alpha: the maximum value of theta 
     mag: the magnification
     w_0: the beam waist [mm]
-    R_BFP: the overall radius of the back focal plane
 Returns:
-    gaussian_amplitude: the amplitude of the gaussian beam at each value of theta
+    gaussian_amplitude: the amplitude of the gaussian beam at each value of s_perp
 """
-def gaussian_amplitude_theta(theta, alpha, mag, w_0, R_BFP):
-    r_bfp = R_BFP * (np.sin(theta) / np.sin(alpha))
-    gaussian_amplitude = np.exp(-1 * ((r_bfp / (mag * w_0))**2))
+def gaussian_amplitude_s_perp(mag, w_0, f, n, s_perp):
+    s_waist = (mag * w_0) / (f * n)
+    gaussian_amplitude = np.exp(-1 *((s_perp / s_waist)**2))
     return gaussian_amplitude
 
 
@@ -47,17 +44,17 @@ def strength_angular(theta, phi):
     return a_x, a_y, a_z
 
 
-def get_bfp_grid(R_BFP, grid_bfp):
-    dxy_bfp = (2 * R_BFP) / grid_bfp
+def get_bfp_grid(L_bfp, grid_bfp):
+    dxy_bfp = L_bfp / grid_bfp
     x_bfp_1d = (np.arange(grid_bfp) - grid_bfp / 2) * dxy_bfp
     y_bfp_1d = (np.arange(grid_bfp) - grid_bfp / 2) * dxy_bfp
     x_bfp, y_bfp = np.meshgrid(x_bfp_1d, y_bfp_1d, indexing="ij")
     return dxy_bfp, x_bfp, y_bfp
 
 
-def bfp_coord_convert(R_BFP, alpha, x_bfp, y_bfp):
-    sx = (x_bfp / R_BFP) * np.sin(alpha)
-    sy = (y_bfp / R_BFP) * np.sin(alpha)
+def bfp_coord_convert(f, n, alpha, x_bfp, y_bfp):
+    sx = x_bfp / (f * n)
+    sy = y_bfp / (f * n)
 
     s_perp2 = sx**2 + sy**2
     s_max2 = np.sin(alpha)**2
@@ -79,7 +76,7 @@ def make_rw_cache(
     L_ffp_x, L_ffp_y,
     grid_ffp_x, grid_ffp_y,
     x_offset, y_offset,
-    alpha, k, R_BFP,
+    alpha, k, f, n, L_bfp,
     grid_bfp
 ):
     """
@@ -89,15 +86,15 @@ def make_rw_cache(
         L_ffp_x, L_ffp_y
         grid_ffp_x, grid_ffp_y
         x_offset, y_offset
-        alpha, k, R_BFP
+        alpha, k, f, n, L_bfp
         grid_bfp
     """
 
-    #BFP grid stays square/circular
-    dxy_bfp, x_bfp, y_bfp = get_bfp_grid(R_BFP, grid_bfp)
+    #BFP grid is a square with length L_bfp
+    dxy_bfp, x_bfp, y_bfp = get_bfp_grid(L_bfp, grid_bfp)
 
     mask, theta, phi, sx, sy, sz = bfp_coord_convert(
-        R_BFP, alpha, x_bfp, y_bfp
+        f, n, alpha, x_bfp, y_bfp
     )
 
     #angular strength factors
@@ -138,11 +135,11 @@ def make_rw_cache(
 
 @jax.jit
 def rw_kernel_cached(
-    theta, sz, mask,
+    theta, sx, sy, sz, mask,
     a_x, a_y, a_z,
     Ax, Ay,
     phase_aberration,
-    alpha, k, f, mag, w_0, R_BFP,
+    alpha, k, f, n, mag, w_0, L_bfp,
     dxy_bfp, N_order, z
 ):
     """
@@ -152,12 +149,12 @@ def rw_kernel_cached(
     """
 
     # Gaussian BFP amplitude
-    gauss = gaussian_amplitude_theta(
-        theta,
-        alpha,
+    gauss = gaussian_amplitude_s_perp(
         mag,
         w_0,
-        R_BFP,
+        f,
+        n,
+        np.sqrt(sx**2 + sy**2),
     )
 
     #complex BFP field
@@ -181,8 +178,9 @@ def rw_kernel_cached(
     #prefactors
     C = -1j * k * f / (2 * np.pi)
 
-    ds_xy = (np.sin(alpha) / R_BFP) * dxy_bfp
-    scale = C * ds_xy**2
+    dsx = dxy_bfp / (f * n)
+    dsy = dxy_bfp / (f * n)
+    scale = C * dsx * dsy
 
     #compute RW integral
     E_x = scale * (Ax @ P_x @ Ay)
@@ -198,7 +196,7 @@ def rw_kernel_cached(
 
 def rw_fast_jax_cached(
     cache,
-    alpha, k, f, mag, w_0, R_BFP,
+    alpha, k, f, n, mag, w_0, L_bfp,
     aberration,
     N_order,
     z
@@ -224,6 +222,8 @@ def rw_fast_jax_cached(
 
     I = rw_kernel_cached(
         cache["theta"],
+        cache["sx"],
+        cache["sy"],
         cache["sz"],
         cache["mask"],
         cache["a_x"],
@@ -232,7 +232,7 @@ def rw_fast_jax_cached(
         cache["Ax"],
         cache["Ay"],
         phase_aberration,
-        alpha, k, f, mag, w_0, R_BFP,
+        alpha, k, f, n, mag, w_0, L_bfp,
         cache["dxy_bfp"],
         N_order,
         z,

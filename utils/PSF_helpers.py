@@ -91,7 +91,6 @@ class Microscope():
         self.grid_bfp = grid_bfp
         self.k = (2*n*np.pi)/lambd 
         self.alpha = np.arcsin(num_apt / n)
-        self.cache = 0
 
     def compute_phase_map(self, aberration):
         return get_phase_map(
@@ -172,31 +171,43 @@ class Microscope():
         x, y = grid.get_xy()
         return x, y, I
     
-    #NEED TO UPDATE THIS FOR r_pupil/L_bfp
-    # def compute_PSF_jax(self,
-    #                 grid: Arbitrary_Grid, 
-    #                 aberration: Aberration,
-    #                 force_cache = True):
+    def compute_PSF_jax(self,
+                    grid: Arbitrary_Grid,
+                    aberration: Aberration,
+                    force_cache=False):
+
+        if force_cache or not hasattr(self, "cache"):
+            self.cache = make_rw_cache(
+                L_ffp_x=grid.L_ffp_x,
+                L_ffp_y=grid.L_ffp_y,
+                grid_ffp_x=grid.grid_ffp_x,
+                grid_ffp_y=grid.grid_ffp_y,
+                x_offset=grid.x_offset,
+                y_offset=grid.y_offset,
+                alpha=self.alpha,
+                k=self.k,
+                f=self.f,
+                n=self.n,
+                L_bfp=self.L_bfp,
+                grid_bfp=self.grid_bfp
+            )
+        _, _, I = rw_fast_jax_cached(
+            cache=self.cache,
+            alpha=self.alpha,
+            k=self.k,
+            f=self.f,
+            n=self.n,
+            mag=self.mag,
+            w_0=self.w_0,
+            L_bfp=self.L_bfp,
+            aberration=aberration,
+            N_order=self.N_order,
+            z=grid.z_level
+        )
+
+        x, y = grid.get_xy()
+        return x, y, I
         
-    #     if self.cache == 0 or force_cache:
-    #         self.cache = make_rw_cache(
-    #         grid.L_ffp_x, grid.L_ffp_y,
-    #         grid.grid_ffp_x, grid.grid_ffp_y,
-    #         grid.x_offset, grid.y_offset,
-    #         self.alpha, self.k, self.r_bfp,
-    #         self.grid_bfp)
-        
-        
-    #     _, _, I = rw_fast_jax_cached(
-    #         self.cache,
-    #         self.alpha, self.k, self.f, self.mag, self.w_0, self.r_bfp,
-    #         aberration,
-    #         self.N_order,
-    #         grid.z_level
-    #     )
-    #     x, y = grid.get_xy()
-    #     return x, y, I
-    
     def compute_image(self, 
                       image: Image_Mask, 
                       aberration: Aberration,
