@@ -97,7 +97,7 @@ def forward_h(microscope: Microscope,
     
     H = forward_H(microscope = microscope, 
                   aberration = aberration)
-    H = _asarray(H, dtype=_xp().complex64 if USE_CUPY else np.complex64)
+    H = _asarray(H, dtype=_xp().complex128 if USE_CUPY else np.complex128)
     h = ifft2(H, workers = -1)
     return h
 
@@ -166,7 +166,7 @@ def objective(cache,
 
 def cache_D_stack(d_stack: np.array):
     D_stack = fft2(_asarray(d_stack, dtype=_xp().float64 if USE_CUPY else np.float64), axes = (-2, -1), workers = -1)
-    return D_stack.astype(_xp(D_stack).complex64)
+    return D_stack.astype(_xp(D_stack).complex128)
 
 
 def cache_Z_stack(microscope: Microscope,
@@ -184,10 +184,10 @@ def pre_compute_cache(microscope: Microscope,
     H_stack = _asarray([forward_H(microscope, a + a_guess) for a in a_stack])
     xp = _xp(H_stack)
 
-    H_stack = H_stack.astype(xp.complex64)
-    h_stack = ifft2(H_stack, axes = (-2, -1), workers = -1).astype(xp.complex64)
+    H_stack = H_stack.astype(xp.complex128)
+    h_stack = ifft2(H_stack, axes = (-2, -1), workers = -1).astype(xp.complex128)
     s_stack = (xp.abs(h_stack)**(2 * microscope.N_order)).astype(xp.float64)
-    S_stack = fft2(s_stack, axes = (-2, -1), workers = -1).astype(xp.complex64)
+    S_stack = fft2(s_stack, axes = (-2, -1), workers = -1).astype(xp.complex128)
 
     N = len(D_stack)
     j_idx, k_idx = xp.triu_indices(N, k = 1)
@@ -196,7 +196,7 @@ def pre_compute_cache(microscope: Microscope,
         "h_stack": h_stack,
         "S_stack": S_stack,
         "s_stack": s_stack,
-        "D_stack": D_stack.astype(xp.complex64, copy=False),
+        "D_stack": D_stack.astype(xp.complex128, copy=False),
         "a_stack": a_stack,
         "Z_stack": Z_stack.astype(xp.float64, copy=False),
         "j_idx": j_idx,
@@ -244,7 +244,7 @@ def estimate_aberration_gradient(microscope: Microscope,
     Z_stack = cache["Z_stack"]
     xp = _xp(S_stack)
 
-    F_guess = xp.asarray(F_guess, dtype=xp.complex64)
+    F_guess = xp.asarray(F_guess, dtype=xp.complex128)
     V_stack = xp.conj(F_guess) * D_stack - xp.abs(F_guess)**2 * S_stack
 
     h_abs_power = xp.abs(h_stack)**(2 * microscope.N_order - 2)
@@ -339,7 +339,7 @@ def get_hessian(microscope: Microscope,
     Q = get_Q(S_stack = S_stack,
               gamma = gamma)
 
-    D_tilde_stack = (D_stack/xp.sqrt(Q)).astype(xp.complex64)
+    D_tilde_stack = (D_stack/xp.sqrt(Q)).astype(xp.complex128)
     hessian_batch_size = max(1, int(hessian_batch_size))
     
     for n0 in range(0, n_modes, hessian_batch_size):
@@ -369,6 +369,7 @@ def loop_optimize(n_loops: int,
     try:
         gamma                   = params["gamma"]
         J_tol                   = params["J_tol"]
+        max_step                = params["max_step"]
     except:
         print("Error: please provide all parameters (gamma, J_tol)")
         
@@ -380,7 +381,7 @@ def loop_optimize(n_loops: int,
     #initialize logs
     if log:
         c_guess_log = np.zeros((n_loops, len(modes_corrected)), dtype=np.float64) 
-        F_guess_log = np.zeros((n_loops, microscope.grid_bfp, microscope.grid_bfp), dtype=np.complex64) 
+        F_guess_log = np.zeros((n_loops, microscope.grid_bfp, microscope.grid_bfp), dtype=np.complex128) 
 
     J_log = np.zeros(n_loops, dtype=np.float64) if log else np.zeros(n_loops, dtype=np.float64)
 
@@ -434,16 +435,23 @@ def loop_optimize(n_loops: int,
             print(f"\t Estimated Hessian in {np.round(s-t, 3)} seconds")
         
                 
-        # step_norm = np.linalg.norm(update)
-        # if step_norm > max_step:
-        #     update *= max_step / step_norm
+        
         
         if USE_CUPY:
             update = -cp.linalg.solve(hessian, g_c)
+            step_norm = np.linalg.norm(update)
+            if step_norm > max_step:
+                update *= max_step / step_norm
             c_guess = c_guess + cp.asnumpy(update)
         else:
             update = -np.linalg.solve(hessian, g_c)
+            step_norm = np.linalg.norm(update)
+            if step_norm > max_step:
+                update *= max_step / step_norm
             c_guess = c_guess + update
+
+
+
         a_guess = Aberration(modes_corrected, c_guess)
 
         if log:
@@ -457,6 +465,7 @@ def loop_optimize(n_loops: int,
             #J increasing condition
             denom = np.abs(J_log[i-1] - J_log[0])
             J_stat = np.inf if denom == 0 else np.abs(J_log[i] - J_log[i-1])/denom
+            print(f"Jdiff (should be neg): {J_log[i] - J_log[i-1]}")
             if J_stat < J_tol or J_log[i] - J_log[i-1] > 0:
                 if log:
                     return c_guess, _asnumpy(F_guess), c_guess_log, F_guess_log, J_log 
