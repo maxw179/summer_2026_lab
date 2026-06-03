@@ -432,14 +432,18 @@ def loop_optimize(n_loops: int,
         s = time.time()
         if debug:
             print(f"\t Estimated Hessian in {np.round(s-t, 3)} seconds")
-        update = -1 * np.linalg.solve(hessian, _asnumpy(g_c))
-
         
+                
         # step_norm = np.linalg.norm(update)
         # if step_norm > max_step:
         #     update *= max_step / step_norm
         
-        c_guess = c_guess + _asnumpy(update)
+        if USE_CUPY:
+            update = -cp.linalg.solve(hessian, g_c)
+            c_guess = c_guess + cp.asnumpy(update)
+        else:
+            update = -np.linalg.solve(hessian, g_c)
+            c_guess = c_guess + update
         a_guess = Aberration(modes_corrected, c_guess)
 
         if log:
