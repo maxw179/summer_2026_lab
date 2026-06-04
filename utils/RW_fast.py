@@ -114,17 +114,18 @@ def get_pupil_function(alpha, mag, w_0, f, n, L_bfp, aberration, grid_bfp, gauss
 
 def get_scalar_h(L_ffp_x, L_ffp_y, grid_ffp_x, grid_ffp_y, x_offset, y_offset,
     alpha, k, f, n, mag, w_0, L_bfp, aberration,
-    grid_bfp):
+    grid_bfp, z=0):
 
     z_map = aberration.construct_map(alpha)
-    #BFP grid is a square with length L_bfp
+
+    # BFP grid is a square with length L_bfp
     dxy_bfp, x_bfp, y_bfp = get_bfp_grid(L_bfp, grid_bfp)
 
     mask, theta, phi, sx, sy, sz = bfp_coord_convert(
         f, n, alpha, x_bfp, y_bfp
     )
 
-    #build the BFP field U
+    # build the BFP field U
     U = np.zeros_like(x_bfp, dtype=complex)
 
     gauss = gaussian_amplitude_s_perp(
@@ -136,7 +137,9 @@ def get_scalar_h(L_ffp_x, L_ffp_y, grid_ffp_x, grid_ffp_y, x_offset, y_offset,
     )
 
     phase = np.exp(1j * z_map(theta[mask], phi[mask]))
-    U[mask] = gauss[mask] * phase 
+    z_phase = np.exp(1j * k * z * sz[mask])
+
+    U[mask] = gauss[mask] * phase * z_phase
 
     dx_ffp = L_ffp_x / grid_ffp_x
     dy_ffp = L_ffp_y / grid_ffp_y
@@ -144,7 +147,7 @@ def get_scalar_h(L_ffp_x, L_ffp_y, grid_ffp_x, grid_ffp_y, x_offset, y_offset,
     x_ffp = x_offset + (np.arange(grid_ffp_x) - grid_ffp_x / 2) * dx_ffp
     y_ffp = y_offset + (np.arange(grid_ffp_y) - grid_ffp_y / 2) * dy_ffp
 
-    #BFP angular coordinate axes
+    # BFP angular coordinate axes
     sx_1d = sx[:, 0]   # length grid_bfp
     sy_1d = sy[0, :]   # length grid_bfp
 
@@ -155,8 +158,8 @@ def get_scalar_h(L_ffp_x, L_ffp_y, grid_ffp_x, grid_ffp_y, x_offset, y_offset,
     Ay = np.exp(1j * k * np.outer(sy_1d, y_ffp))
 
     h = Ax @ U @ Ay * dsx * dsy
-    #might flip
-    return h
+
+    return np.flip(h.T, axis = 1)
 
 
 
@@ -236,4 +239,4 @@ def rw_fast(L_ffp_x, L_ffp_y, grid_ffp_x, grid_ffp_y, x_offset, y_offset,
     I1 = np.abs(E_x)**2 + np.abs(E_y)**2 + np.abs(E_z)**2
     I = I1**N_order
 
-    return x_ffp, y_ffp, np.flip(I.T)
+    return x_ffp, y_ffp, np.flip(I.T, axis = 1)

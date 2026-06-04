@@ -136,6 +136,7 @@ class Microscope():
             L_bfp=self.L_bfp,
             aberration=aberration,
             grid_bfp=self.grid_bfp,
+            z = grid.z_level
         )
 
     def compute_scalar_psf(self,
@@ -147,29 +148,36 @@ class Microscope():
 
     def compute_PSF(self,
                     grid: Arbitrary_Grid, 
-                    aberration: Aberration):
+                    aberration: Aberration,
+                    mode = "vector"):
         
-        _, _, I = rw_fast(
-            L_ffp_x=grid.L_ffp_x,
-            L_ffp_y=grid.L_ffp_y,
-            grid_ffp_x=grid.grid_ffp_x,
-            grid_ffp_y=grid.grid_ffp_y,
-            x_offset=grid.x_offset,
-            y_offset=grid.y_offset,
-            alpha=self.alpha,
-            k=self.k,
-            f=self.f,
-            n=self.n,
-            mag=self.mag, 
-            w_0=self.w_0,
-            L_bfp=self.L_bfp, 
-            aberration=aberration,
-            grid_bfp=self.grid_bfp,
-            N_order=self.N_order,
-            z=grid.z_level
-        )
-        x, y = grid.get_xy()
-        return x, y, I
+        if mode == "vector":
+            _, _, I = rw_fast(
+                L_ffp_x=grid.L_ffp_x,
+                L_ffp_y=grid.L_ffp_y,
+                grid_ffp_x=grid.grid_ffp_x,
+                grid_ffp_y=grid.grid_ffp_y,
+                x_offset=grid.x_offset,
+                y_offset=grid.y_offset,
+                alpha=self.alpha,
+                k=self.k,
+                f=self.f,
+                n=self.n,
+                mag=self.mag, 
+                w_0=self.w_0,
+                L_bfp=self.L_bfp, 
+                aberration=aberration,
+                grid_bfp=self.grid_bfp,
+                N_order=self.N_order,
+                z=grid.z_level
+            )
+            x, y = grid.get_xy()
+            return x, y, I
+        elif mode == "scalar":
+            return self.compute_scalar_psf(grid, aberration)
+
+        else:
+            raise RuntimeError("Invalid mode to compute PSF")
     
     def compute_PSF_jax(self,
                     grid: Arbitrary_Grid,
@@ -211,12 +219,11 @@ class Microscope():
     def compute_image(self, 
                       image: Image_Mask, 
                       aberration: Aberration,
-                      mode = "vector"):
-        if mode == "vector":
-            x, y, PSF = self.compute_PSF(image, aberration)
-        else:
-            x, y, PSF = self.compute_scalar_psf(image, aberration)
-        return x, y, psf_convolve(image.image_mask, PSF)
+                      mode = "vector",
+                      norm = True):
+
+        x, y, PSF = self.compute_PSF(image, aberration, mode)
+        return x, y, psf_convolve(image.image_mask, PSF, norm)
 
 def bead_img(grid: Arbitrary_Grid, 
              xs: list, 
@@ -264,10 +271,13 @@ def random_bead_img(grid,
     return bead_img(grid,xs, ys,bead_sizes)
 
 
-def psf_convolve(image, psf):
-    psf_sum = np.sum(psf)
-    if psf_sum == 0:
-        raise RuntimeError("Cannot normalize PSF because its sum is zero.")
+def psf_convolve(image, psf, norm = True):
+    if norm:
+        psf_sum = np.sum(psf)
+
+    else:
+        psf_sum = 1
+    
     return fftconvolve(image, psf / psf_sum, mode="same")
 
 def add_gaussian_noise(image, SNR, rng, percentile = 90):
