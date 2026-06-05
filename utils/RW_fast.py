@@ -159,7 +159,7 @@ def get_scalar_h(L_ffp_x, L_ffp_y, grid_ffp_x, grid_ffp_y, x_offset, y_offset,
 
     h = Ax @ U @ Ay * dsx * dsy
 
-    return np.flip(h.T, axis = 1)
+    return h ###np.flip(h, axis = 1)
 
 
 
@@ -239,4 +239,4 @@ def rw_fast(L_ffp_x, L_ffp_y, grid_ffp_x, grid_ffp_y, x_offset, y_offset,
     I1 = np.abs(E_x)**2 + np.abs(E_y)**2 + np.abs(E_z)**2
     I = I1**N_order
 
-    return x_ffp, y_ffp, np.flip(I.T, axis = 1)
+    return x_ffp, y_ffp, I#np.flip(I.T, axis = 1)

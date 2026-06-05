@@ -434,8 +434,7 @@ def loop_optimize(n_loops: int,
         if debug:
             print(f"\t Estimated Hessian in {np.round(s-t, 3)} seconds")
         
-                
-        
+
         
         if USE_CUPY:
             update = -cp.linalg.solve(hessian, g_c)
@@ -453,7 +452,6 @@ def loop_optimize(n_loops: int,
 
 
         a_guess = Aberration(modes_corrected, c_guess)
-
         if log:
             c_guess_log[i] = c_guess 
             if F_guess_log is not None:
@@ -465,7 +463,7 @@ def loop_optimize(n_loops: int,
             #J increasing condition
             denom = np.abs(J_log[i-1] - J_log[0])
             J_stat = np.inf if denom == 0 else np.abs(J_log[i] - J_log[i-1])/denom
-            print(f"Jdiff (should be neg): {J_log[i] - J_log[i-1]}")
+            #print(f"Jdiff (should be neg): {J_log[i] - J_log[i-1]}")
             if J_stat < J_tol or J_log[i] - J_log[i-1] > 0:
                 if log:
                     return c_guess, _asnumpy(F_guess), c_guess_log, F_guess_log, J_log 
