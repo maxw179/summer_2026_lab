@@ -149,18 +149,18 @@ def rw_kernel_cached(
     """
 
     # Gaussian BFP amplitude
-    if not(np.isnan(w_0)) and not(np.isnan(mag)):
-        gauss = gaussian_amplitude_s_perp(
-            mag,
-            w_0,
-            f,
-            n,
-            np.sqrt(sx**2 + sy**2),
-        )
 
-        #complex BFP field
-        U = gauss * np.exp(1j * phase_aberration)
-        
+    gauss = gaussian_amplitude_s_perp(
+        mag,
+        w_0,
+        f,
+        n,
+        np.sqrt(sx**2 + sy**2),
+    )
+
+    #complex BFP field
+    U = gauss * np.exp(1j * phase_aberration)
+    
     U = np.where(mask, U, 0.0 + 0.0j)
 
     #safe sz outside pupil

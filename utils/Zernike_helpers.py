@@ -214,7 +214,7 @@ def zernike_RMS_difference(a_1, a_2, alpha, n=100):
         z_2_out = z_2(theta_grid[mask], phi_grid[mask])
 
         # difference in "waves"
-        dz = (z_1_out - z_2_out)
+        dz = (z_1_out - z_2_out) 
 
         return np.sqrt(np.mean(dz**2))
 
