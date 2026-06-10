@@ -34,6 +34,33 @@ def plot_intensity(x, y, intensity_map, file_name = None, normalize = True, vmax
     
     plt.show()
 
+def plot_intensity_clean(x, y, intensity_map, file_name = None, normalize = True, vmax = False):
+    fig, ax = plt.subplots(figsize = (3.5, 3.5), dpi = 300)
+    if normalize:
+        intensity_map = intensity_map / np.max(intensity_map) 
+    if not(vmax):
+        vmax = np.max(intensity_map)
+    plt.imshow(intensity_map,
+            extent=[x[0], x[-1], y[0], y[-1]],
+        origin='lower',
+        aspect = "equal",
+        vmin = np.min(intensity_map),
+        vmax = vmax,
+        cmap='Greys_r')
+    ax.grid(False)
+    step = (np.max(x) - np.min(x))/5
+    x_ticks = []
+    y_ticks =  []
+    plt.xticks(x_ticks, rotation=45)
+    plt.yticks(y_ticks, rotation=45)
+
+    plt.gca().set_aspect("equal")
+    if not(file_name is None):
+        plt.savefig(f"figures/{file_name}.png", bbox_inches = "tight")
+    
+    plt.show()
+
+
 def plot_intensity_unnorm(x, y, intensity_map, file_name = None):
     fig, ax = plt.subplots(figsize = (3.5, 3.5), dpi = 300)
     plt.imshow(intensity_map,
@@ -126,7 +153,7 @@ def composite_plot(x, y, intensity_map, z_map, alpha, file_name = None):
             extent=[x[0], x[-1], y[0], y[-1]],
         origin='lower',
         aspect = "equal",
-        cmap='Greys')
+        cmap='Greys_r')
     ax.grid(False)
     plt.xticks(rotation=45)
     plt.yticks(rotation=45)
@@ -148,6 +175,36 @@ def composite_plot(x, y, intensity_map, z_map, alpha, file_name = None):
     polar_ax.set_xticklabels([])
     polar_ax.set_yticklabels([])
     plt.colorbar(label='Intensity (Normalized)')
+    if not(file_name is None):
+        plt.savefig(f"figures/{file_name}.png", bbox_inches = "tight")
+    plt.show()
+
+def composite_plot_clean(x, y, intensity_map, z_map, alpha, file_name = None):
+    fig, ax = plt.subplots(dpi = 300)
+    plt.imshow(intensity_map / np.max(intensity_map),
+            extent=[x[0], x[-1], y[0], y[-1]],
+        origin='lower',
+        aspect = "equal",
+        cmap='Greys_r')
+    ax.grid(False)
+    plt.xticks([])
+    plt.yticks([])
+
+    rho = np.linspace(0, 1, 500)
+    phi = np.linspace(0, 2*np.pi, 500)
+    rho_grid, phi_grid = np.meshgrid(rho, phi)
+    rho = np.linspace(0, 1, 500)
+    phi = np.linspace(0, 2*np.pi, 500)
+    rho_grid, phi_grid = np.meshgrid(rho, phi, indexing="ij")  
+    theta_grid = np.arcsin(rho_grid * np.sin(alpha))           
+    z = z_map(theta_grid, phi_grid)                          
+    size_param = 0.05
+    polar_ax= fig.add_axes([0.58 - size_param, 0.68 - size_param, 0.2 + size_param, 0.2 + size_param], projection = "polar")
+    polar_ax.pcolormesh(phi,rho,z,edgecolors='face', vmin = -2*np.pi, vmax = 2*np.pi,
+                        cmap = "plasma")
+    polar_ax.grid(False)
+    polar_ax.set_xticklabels([])
+    polar_ax.set_yticklabels([])
     if not(file_name is None):
         plt.savefig(f"figures/{file_name}.png", bbox_inches = "tight")
     plt.show()

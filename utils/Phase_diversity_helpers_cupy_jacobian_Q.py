@@ -1,0 +1,734 @@
+import sys
+from pathlib import Path
+
+ROOT = Path.cwd().resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from utils.PSF_helpers import *
+from utils.Plot_helpers import *
+from utils.Zernike_helpers import *
+from utils.Booth_helpers import *
+
+import numpy as np
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import time
+import subprocess
+
+from scipy import fft as sp_fft
+
+try:
+    import cupy as cp
+    from cupyx.scipy import fft as cp_fft
+    USE_CUPY = True
+except ImportError:
+    cp = None
+    cp_fft = None
+    USE_CUPY = False
+    print("Failed to import cupy.")
+
+
+def _xp(x=None):
+    if USE_CUPY and x is not None:
+        return cp.get_array_module(x)
+    return cp if USE_CUPY else np
+
+
+def _asarray(x, dtype=None):
+    if USE_CUPY:
+        return cp.asarray(x, dtype=dtype)
+    return np.asarray(x, dtype=dtype)
+
+
+def _asnumpy(x):
+    if USE_CUPY and isinstance(x, cp.ndarray):
+        return cp.asnumpy(x)
+    return x
+
+
+def _scalar(x):
+    x = _asnumpy(x)
+    if hasattr(x, "item"):
+        return x.item()
+    return x
+
+def _sync():
+    if USE_CUPY:
+        cp.cuda.Stream.null.synchronize()
+
+
+def fft2(x, *args, **kwargs):
+    if USE_CUPY and isinstance(x, cp.ndarray):
+        kwargs.pop("workers", None)
+        return cp_fft.fft2(x, *args, **kwargs)
+    return sp_fft.fft2(x, *args, **kwargs)
+
+
+def ifft2(x, *args, **kwargs):
+    if USE_CUPY and isinstance(x, cp.ndarray):
+        kwargs.pop("workers", None)
+        return cp_fft.ifft2(x, *args, **kwargs)
+    return sp_fft.ifft2(x, *args, **kwargs)
+
+
+def fftshift(x, *args, **kwargs):
+    if USE_CUPY and isinstance(x, cp.ndarray):
+        return cp_fft.fftshift(x, *args, **kwargs)
+    return sp_fft.fftshift(x, *args, **kwargs)
+
+
+def ifftshift(x, *args, **kwargs):
+    if USE_CUPY and isinstance(x, cp.ndarray):
+        return cp_fft.ifftshift(x, *args, **kwargs)
+    return sp_fft.ifftshift(x, *args, **kwargs)
+
+
+def forward_H(microscope: Microscope, 
+              aberration: Aberration,
+              gaussian = False):
+    
+    H = microscope.compute_pupil_function(aberration = aberration, 
+                                          gaussian = gaussian) 
+    return H
+
+
+def forward_h(microscope: Microscope, 
+              aberration: Aberration,
+              gaussian = False):
+    
+    H = forward_H(microscope = microscope, 
+                  aberration = aberration,
+                  gaussian = gaussian)
+    H = _asarray(H, dtype=_xp().complex128 if USE_CUPY else np.complex128)
+    h = ifft2(H, workers = -1)
+    return h
+
+
+def forward_PSF(microscope: Microscope, 
+                aberration: Aberration,
+                gaussian = False):
+    
+    h = forward_h(microscope = microscope, 
+                  aberration = aberration, gaussian = gaussian)
+    xp = _xp(h)
+    shifted_psf = xp.abs(h)**(2 * microscope.N_order)
+    psf = fftshift(shifted_psf)
+    return psf
+
+
+def circular_convolve(f: np.array, 
+                      psf: np.array):
+
+    f = _asarray(f, dtype=_xp().float64 if USE_CUPY else np.float64)
+    psf = _asarray(psf)
+    xp = _xp(f)
+    S = fft2(ifftshift(psf))
+    F = fft2(f, workers = -1)
+    convolved_img = xp.real(ifft2(S * F, workers = -1))
+    return _asnumpy(convolved_img)
+
+
+def forward_image(microscope: Microscope, 
+                  f: np.array, 
+                  aberration: Aberration,
+                  gaussian = False):
+    
+    psf = forward_PSF(microscope = microscope,
+                       aberration = aberration,
+                       gaussian = gaussian)
+    
+    final_img = circular_convolve(f = f, psf = psf)
+    return final_img
+
+
+def get_diversity_image(microscope: Microscope, 
+                        f: np.array, 
+                        true_aberration: Aberration, 
+                        diversity_aberration: Aberration,
+                        gaussian = False):
+    
+    img = forward_image(microscope = microscope, 
+                         f = f, 
+                         aberration = true_aberration + diversity_aberration,
+                         gaussian = gaussian)
+    return img
+
+
+def objective(cache,
+              gamma: float):
+
+    S_stack = cache["S_stack"]
+    D_stack = cache["D_stack"]
+    xp = _xp(S_stack)
+
+    gamma = xp.asarray(gamma, dtype=xp.float64)
+    first_term = xp.sum(xp.abs(D_stack)**2)
+
+    numerator = xp.abs(xp.sum(xp.conj(S_stack) * D_stack, axis=0))**2
+    denominator = gamma + xp.sum(xp.abs(S_stack)**2, axis=0)
+
+    J = xp.real(first_term - xp.sum(numerator / denominator))
+    return _scalar(J)
+
+
+def cache_D_stack(d_stack: np.array):
+    D_stack = fft2(_asarray(d_stack, dtype=_xp().float64 if USE_CUPY else np.float64), axes = (-2, -1), workers = -1)
+    return D_stack.astype(_xp(D_stack).complex128)
+
+
+def cache_Z_stack(microscope: Microscope,
+                  modes_corrected: np.array):
+    Z_stack = _asarray([microscope.compute_phase_map(Aberration([m], [1.0])) for m in modes_corrected])
+    return Z_stack.astype(_xp(Z_stack).float64)
+
+
+
+def pre_compute_cache(microscope: Microscope,
+                      D_stack: np.array,
+                      Z_stack: np.array,
+                      a_guess: Aberration,
+                      a_stack: np.array,
+                      gaussian = False):
+    H_stack = _asarray([forward_H(microscope, a + a_guess, gaussian) for a in a_stack])
+    xp = _xp(H_stack)
+
+    H_stack = H_stack.astype(xp.complex128)
+    h_stack = ifft2(H_stack, axes = (-2, -1), workers = -1).astype(xp.complex128)
+    s_stack = (xp.abs(h_stack)**(2 * microscope.N_order)).astype(xp.float64)
+    S_stack = fft2(s_stack, axes = (-2, -1), workers = -1).astype(xp.complex128)
+
+    N = len(D_stack)
+    j_idx, k_idx = xp.triu_indices(N, k = 1)
+
+    cache = {"H_stack": H_stack,
+        "h_stack": h_stack,
+        "S_stack": S_stack,
+        "s_stack": s_stack,
+        "D_stack": D_stack.astype(xp.complex128, copy=False),
+        "a_stack": a_stack,
+        "Z_stack": Z_stack.astype(xp.float64, copy=False),
+        "j_idx": j_idx,
+        "k_idx": k_idx}
+    
+    return cache
+
+
+#grid = grid along which the images were taken
+#d_stack = list of phase diverse images
+#a_guess = guess for the inherent sample aberration
+#a_stack = list of aberrations applied along each phase diverse image
+#gamma = regularization parameters
+def estimate_object(cache: dict,
+                    gamma: float):
+    
+
+    S_stack = cache["S_stack"]
+    D_stack = cache["D_stack"]
+    xp = _xp(S_stack)
+    gamma = xp.asarray(gamma, dtype=xp.float64)
+    
+    #compute the estimator
+    numerator = xp.sum(xp.conj(S_stack) * D_stack, axis = 0)
+    denominator = gamma + xp.sum(xp.abs(S_stack)**2, axis = 0 )
+    F = numerator/denominator 
+    f = ifft2(F, workers = -1)
+    return xp.real(f), F
+
+
+#grid = grid along which the images were taken
+#d_stack = list of phase diverse images
+#a_stack = list of aberrations applied along each phase diverse image
+#aberration_guesss = guess for the inherent sample aberration
+#modes_corrected = list of modes to correct along
+#gamma = regularization parameters
+def estimate_aberration_gradient(microscope: Microscope,
+                                cache: dict,
+                                F_guess: np.array):
+    
+    D_stack = cache["D_stack"]
+    S_stack = cache["S_stack"]
+    h_stack = cache["h_stack"]
+    H_stack = cache["H_stack"]
+    Z_stack = cache["Z_stack"]
+    xp = _xp(S_stack)
+
+    F_guess = xp.asarray(F_guess, dtype=xp.complex128)
+    V_stack = xp.conj(F_guess) * D_stack - xp.abs(F_guess)**2 * S_stack
+
+    h_abs_power = xp.abs(h_stack)**(2 * microscope.N_order - 2)
+    inner_product = h_abs_power * h_stack * xp.real(ifft2(V_stack, axes = (-2, -1), workers = -1))
+
+    g_stack = xp.imag(xp.conj(H_stack) * fft2(inner_product, axes = (-2, -1), workers = -1)) 
+    g = (-2 * microscope.N_order * xp.sum(g_stack, axis = 0)).astype(xp.float64)
+    #get the component along each zernike
+    g_c = xp.einsum("yx,myx->m", g, Z_stack, optimize=True).astype(xp.float64)
+    return g, g_c
+
+
+def get_Q(S_stack: np.array,
+          gamma: float):
+    xp = _xp(S_stack)
+    gamma = xp.asarray(gamma, dtype=xp.float64)
+    S_squared_stack = xp.abs(S_stack)**2
+
+    return gamma + xp.sum(S_squared_stack, axis = 0)
+
+
+
+def get_Sprime_Z_batch(Z_batch: np.array,
+                       h_stack: np.array,
+                       H_stack: np.array,
+                       N_order: int):
+    """
+    Directional derivative of the simulated OTF stack S_stack with respect to
+    phase perturbations Z_batch.
+
+    Parameters
+    ----------
+    Z_batch : array, shape (B, Ny, Nx)
+        Batch of phase perturbation maps in radians / coefficient units.
+    h_stack : array, shape (K, Ny, Nx)
+        Coherent amplitude PSFs h_k = ifft2(H_k).
+    H_stack : array, shape (K, Ny, Nx)
+        Pupil functions H_k = p exp(i(phi + theta_k)).
+    N_order : int
+        Nonlinear excitation order n. Uses s_k = |h_k|^(2n).
+
+    Returns
+    -------
+    Sprime_Z : array, shape (K, B, Ny, Nx)
+        S'_k[phi] Z_b for every diversity frame k and batch direction b.
+    """
+    xp = _xp(h_stack)
+
+    Z_batch = xp.asarray(Z_batch, dtype=xp.float64)
+    h_abs_power = xp.abs(h_stack)**(2 * N_order - 2)
+
+    # delta H_k = i H_k Z
+    delta_H = 1j * H_stack[:, None] * Z_batch[None]
+    delta_h = ifft2(delta_H, axes=(-2, -1), workers=-1)
+
+    # delta s_k = 2n |h_k|^(2n-2) Re(conj(h_k) delta h_k)
+    delta_s = (
+        2 * N_order
+        * h_abs_power[:, None]
+        * xp.real(xp.conj(h_stack[:, None]) * delta_h)
+    )
+
+    Sprime_Z = fft2(delta_s, axes=(-2, -1), workers=-1)
+    return Sprime_Z.astype(xp.complex128)
+
+
+def get_Qprime_Z_batch(S_stack: np.array,
+                       Sprime_Z_batch: np.array):
+    """
+    Directional derivative Q'[phi] Z for a batch of phase directions.
+
+    Q = gamma + sum_k |S_k|^2, so
+    Q'Z = 2 Re sum_k conj(S_k) S'_k Z.
+
+    Parameters
+    ----------
+    S_stack : array, shape (K, Ny, Nx)
+    Sprime_Z_batch : array, shape (K, B, Ny, Nx)
+
+    Returns
+    -------
+    Qprime_Z : array, shape (B, Ny, Nx)
+    """
+    xp = _xp(S_stack)
+    Qprime_Z = xp.sum(
+        2 * xp.real(xp.conj(S_stack[:, None]) * Sprime_Z_batch),
+        axis=0,
+    )
+    return Qprime_Z.astype(xp.float64)
+
+
+def get_residual_jacobian_action_batch(Z_batch: np.array,
+                                       D_stack: np.array,
+                                       S_stack: np.array,
+                                       h_stack: np.array,
+                                       H_stack: np.array,
+                                       Q: np.array,
+                                       N_order: int,
+                                       j_idx: np.array,
+                                       k_idx: np.array,
+                                       include_Q_derivative: bool = True,
+                                       return_parts: bool = False):
+    """
+    Compute the residual Jacobian action R'[phi] Z for a batch of Zernike
+    phase directions.
+
+    Residual for pair (j, k):
+        R_jk = (D_k S_j - D_j S_k) / sqrt(Q)
+
+    Full Jacobian action:
+        R'_jk Z = (D_k S'_j Z - D_j S'_k Z) / sqrt(Q)
+                  - 0.5 R_jk (Q'Z / Q)
+
+    The second term is the non-fixed-Q correction. Set include_Q_derivative=False
+    to recover the old fixed-Q Jacobian action in residual space.
+
+    Returns
+    -------
+    Rprime_Z : array, shape (B, P, Ny, Nx)
+        P = number of residual pairs j < k.
+    Optional parts dict when return_parts=True.
+    """
+    xp = _xp(S_stack)
+
+    Z_batch = xp.asarray(Z_batch, dtype=xp.float64)
+    D_stack = xp.asarray(D_stack, dtype=xp.complex128)
+    S_stack = xp.asarray(S_stack, dtype=xp.complex128)
+    Q = xp.asarray(Q, dtype=xp.float64)
+
+    B = len(Z_batch)
+    Ny, Nx = S_stack.shape[-2:]
+
+    if len(j_idx) == 0:
+        empty = xp.zeros((B, 0, Ny, Nx), dtype=xp.complex128)
+        if return_parts:
+            return empty, {"fixed_Q": empty, "Q_correction": empty}
+        return empty
+
+    sqrt_Q = xp.sqrt(Q)
+    D_tilde_stack = (D_stack / sqrt_Q).astype(xp.complex128)
+
+    Sprime_Z = get_Sprime_Z_batch(
+        Z_batch=Z_batch,
+        h_stack=h_stack,
+        H_stack=H_stack,
+        N_order=N_order,
+    )
+
+    # Fixed-Q part:
+    # shape after transpose: (B, P, Ny, Nx)
+    fixed_Q = (
+        D_tilde_stack[k_idx, None] * Sprime_Z[j_idx]
+        - D_tilde_stack[j_idx, None] * Sprime_Z[k_idx]
+    ).transpose(1, 0, 2, 3)
+
+    if include_Q_derivative:
+        Qprime_Z = get_Qprime_Z_batch(
+            S_stack=S_stack,
+            Sprime_Z_batch=Sprime_Z,
+        )
+
+        R_jk = (
+            D_stack[k_idx] * S_stack[j_idx]
+            - D_stack[j_idx] * S_stack[k_idx]
+        ) / sqrt_Q
+
+        Q_correction = -0.5 * R_jk[None] * (Qprime_Z[:, None] / Q[None, None])
+        Q_correction = Q_correction.astype(xp.complex128)
+    else:
+        Q_correction = xp.zeros_like(fixed_Q)
+
+    Rprime_Z = fixed_Q + Q_correction
+
+    if return_parts:
+        return Rprime_Z.astype(xp.complex128), {
+            "fixed_Q": fixed_Q.astype(xp.complex128),
+            "Q_correction": Q_correction.astype(xp.complex128),
+        }
+
+    return Rprime_Z.astype(xp.complex128)
+
+
+# Compatibility wrapper name from the old implementation. This no longer returns
+# a closed-form H_GN[phi]Z map; it builds J_R^* J_R Z by residual-space inner
+# products inside get_hessian below. Kept only so old imports do not fail.
+def get_H_gn_phi_batch(Z_batch: np.array,
+                       h_stack: np.array,
+                       H_stack: np.array,
+                       D_tilde_stack: np.array,
+                       N_order: int,
+                       j_idx: np.array,
+                       k_idx: np.array):
+    raise NotImplementedError(
+        "get_H_gn_phi_batch was replaced by residual Jacobian actions. "
+        "Use get_residual_jacobian_action_batch(...) or get_hessian(...)."
+    )
+
+
+# Compatibility wrapper name from the old implementation.
+def get_H_gn_phi_n(Z_n: np.array,
+                   h_stack: np.array,
+                   H_stack: np.array,
+                   D_tilde_stack: np.array,
+                   N_order: int):
+    raise NotImplementedError(
+        "get_H_gn_phi_n was replaced by residual Jacobian actions. "
+        "Use get_residual_jacobian_action_batch(...) or get_hessian(...)."
+    )
+
+
+def residual_action_inner(A: np.array,
+                          B: np.array):
+    """
+    Inner products between two batches of residual Jacobian actions.
+
+    A shape: (Ba, P, Ny, Nx)
+    B shape: (Bb, P, Ny, Nx)
+
+    Returns M[a, b] = Re sum_{pairs,pixels} conj(A[a]) * B[b].
+    """
+    xp = _xp(A)
+    return xp.real(xp.einsum("apxy,bpxy->ab", xp.conj(A), B, optimize=True))
+
+
+def get_hessian(microscope: Microscope,
+                cache: dict,
+                gamma: float,
+                hessian_batch_size: int = 4,
+                include_Q_derivative: bool = True,
+                damping: float = 0.0):
+    """
+    Build the coefficient-space Gauss-Newton Hessian by explicit residual
+    Jacobian actions:
+
+        H_ij = < R'[phi] Z_i, R'[phi] Z_j >.
+
+    This preserves the outer call used by loop_optimize(...):
+        get_hessian(microscope, cache, gamma, hessian_batch_size=4)
+
+    By default, this includes the non-fixed-Q correction term
+        -0.5 R_jk (Q'Z / Q).
+
+    Parameters
+    ----------
+    include_Q_derivative : bool
+        True gives the full residual Jacobian action. False gives the fixed-Q
+        residual Jacobian action, useful as an A/B diagnostic.
+    damping : float
+        Optional Levenberg-style diagonal damping added to the returned Hessian.
+    """
+    D_stack = cache["D_stack"]
+    H_stack = cache["H_stack"]
+    h_stack = cache["h_stack"]
+    S_stack = cache["S_stack"]
+    Z_stack = cache["Z_stack"]
+    j_idx = cache["j_idx"]
+    k_idx = cache["k_idx"]
+    xp = _xp(S_stack)
+
+    n_modes = len(Z_stack)
+    hessian = xp.zeros((n_modes, n_modes), dtype=xp.float64)
+    N_order = microscope.N_order
+
+    Q = get_Q(S_stack=S_stack, gamma=gamma)
+    hessian_batch_size = max(1, int(hessian_batch_size))
+
+    # Precompute all J_R Z_i actions in batches. This is simplest and robust
+    # for ~10--20 modes. It does use memory proportional to
+    # n_modes * n_pairs * image_size.
+    J_actions = []
+    for n0 in range(0, n_modes, hessian_batch_size):
+        n1 = min(n0 + hessian_batch_size, n_modes)
+        J_batch = get_residual_jacobian_action_batch(
+            Z_batch=Z_stack[n0:n1],
+            D_stack=D_stack,
+            S_stack=S_stack,
+            h_stack=h_stack,
+            H_stack=H_stack,
+            Q=Q,
+            N_order=N_order,
+            j_idx=j_idx,
+            k_idx=k_idx,
+            include_Q_derivative=include_Q_derivative,
+        )
+        J_actions.append(J_batch)
+
+    # Fill H block by block: H_ij = <JZ_i, JZ_j>.
+    row0 = 0
+    for A in J_actions:
+        row1 = row0 + A.shape[0]
+        col0 = 0
+        for B in J_actions:
+            col1 = col0 + B.shape[0]
+            hessian[row0:row1, col0:col1] = residual_action_inner(A, B)
+            col0 = col1
+        row0 = row1
+
+    # Numerical symmetrization. This also removes tiny FFT/einsum asymmetries.
+    hessian = 0.5 * (hessian + hessian.T)
+
+    if damping != 0.0:
+        hessian = hessian + xp.asarray(damping, dtype=xp.float64) * xp.eye(n_modes, dtype=xp.float64)
+
+    return hessian.astype(xp.float64)
+
+
+def get_Q_correction_ratio(microscope: Microscope,
+                           cache: dict,
+                           gamma: float,
+                           hessian_batch_size: int = 4,
+                           eps: float = 1e-30):
+    """
+    Diagnostic for how important the non-fixed-Q term is:
+
+        eta_i = ||Q_correction_i|| / ||fixed_Q_i||
+
+    for each Zernike direction Z_i. Large eta means the old fixed-Q GN Hessian
+    is missing a substantial residual-Jacobian contribution.
+    """
+    D_stack = cache["D_stack"]
+    H_stack = cache["H_stack"]
+    h_stack = cache["h_stack"]
+    S_stack = cache["S_stack"]
+    Z_stack = cache["Z_stack"]
+    j_idx = cache["j_idx"]
+    k_idx = cache["k_idx"]
+    xp = _xp(S_stack)
+
+    Q = get_Q(S_stack=S_stack, gamma=gamma)
+    ratios = []
+
+    for n0 in range(0, len(Z_stack), max(1, int(hessian_batch_size))):
+        n1 = min(n0 + int(hessian_batch_size), len(Z_stack))
+        _, parts = get_residual_jacobian_action_batch(
+            Z_batch=Z_stack[n0:n1],
+            D_stack=D_stack,
+            S_stack=S_stack,
+            h_stack=h_stack,
+            H_stack=H_stack,
+            Q=Q,
+            N_order=microscope.N_order,
+            j_idx=j_idx,
+            k_idx=k_idx,
+            include_Q_derivative=True,
+            return_parts=True,
+        )
+        fixed_norm = xp.sqrt(xp.sum(xp.abs(parts["fixed_Q"])**2, axis=(1, 2, 3)))
+        corr_norm = xp.sqrt(xp.sum(xp.abs(parts["Q_correction"])**2, axis=(1, 2, 3)))
+        ratios.append(corr_norm / (fixed_norm + eps))
+
+    return xp.concatenate(ratios).astype(xp.float64)
+
+
+def loop_optimize(n_loops: int,
+                  microscope: Microscope,
+                  d_stack: np.array,
+                  a_stack: np.array,
+                  modes_corrected: np.array,
+                  params: dict,
+                  debug: bool,
+                  log: bool,
+                  gaussian = False):
+    
+    try:
+        gamma                   = params["gamma"]
+        J_tol                   = params["J_tol"]
+        max_step                = params["max_step"]
+    except:
+        print("Error: please provide all parameters (gamma, J_tol)")
+        
+    #initialize variables as necessary
+    a_guess = EmptyAberration()
+    F_guess = 0
+    c_guess = np.zeros(len(modes_corrected), dtype=np.float64)
+
+    c_guess_log = np.zeros((n_loops, len(modes_corrected)), dtype=np.float64) 
+    F_guess_log = np.zeros((n_loops, microscope.grid_bfp, microscope.grid_bfp), dtype=np.complex128) 
+
+    J_log = np.zeros(n_loops, dtype=np.float64) if log else np.zeros(n_loops, dtype=np.float64)
+
+    #cache the D stack and Z stack
+    D_stack = cache_D_stack(d_stack)
+    Z_stack = cache_Z_stack(microscope = microscope,
+                           modes_corrected = modes_corrected)
+
+
+    for i in tqdm(range(n_loops)):
+        cache = pre_compute_cache(microscope = microscope,
+                                  D_stack = D_stack,
+                                  Z_stack = Z_stack,
+                                  a_guess = a_guess,
+                                  a_stack = a_stack,
+                                  gaussian = gaussian)
+
+
+        J = objective(cache,
+                      gamma = gamma)
+        if debug:
+            print(f"Loop {i + 1}: J = {J}")
+            print(f"Corrercted Zernike Mode: {modes_corrected}")
+            print(f"Estimated Zernike Coefficients: {c_guess}")
+
+        t = time.time()
+        f_guess, F_guess = estimate_object(cache = cache,
+                                           gamma = gamma)
+        _sync()
+        s = time.time()
+        if debug:
+            print(f"\t Estimated object in {np.round(s-t, 3)} seconds")
+
+
+        t = time.time()
+        g, g_c = estimate_aberration_gradient(microscope = microscope,
+                                              cache = cache,
+                                              F_guess = F_guess)
+        _sync()
+        s = time.time()
+        if debug:
+            print(f"\t Estimated gradient in {np.round(s-t, 3)} seconds")
+
+        t = time.time()
+        # hessian = get_hessian(microscope = microscope,
+        #                       cache = cache,
+        #                       gamma = gamma,
+        #                       hessian_batch_size = 4)
+        _sync()
+        s = time.time()
+        if debug:
+            print(f"\t Estimated Hessian in {np.round(s-t, 3)} seconds")
+        
+
+        
+        if USE_CUPY:
+            update = -1 * g_c#-cp.linalg.solve(hessian, g_c)
+            step_norm = _scalar(cp.linalg.norm(update))
+            if step_norm > max_step:
+                update *= max_step / step_norm
+            c_guess = c_guess + cp.asnumpy(update)
+        else:
+            update =-1 * g_c  #-np.linalg.solve(hessian, g_c)
+            step_norm = np.linalg.norm(update)
+            if step_norm > max_step:
+                update *= max_step / step_norm
+            c_guess = c_guess + update
+
+
+
+        a_guess = Aberration(modes_corrected, c_guess)
+        c_guess_log[i] = c_guess 
+        F_guess_log[i] = _asnumpy(F_guess) 
+        J_log[i] = J
+
+        if i == 1:
+            if J_log[1] - J_log[0] > 0:
+                if log:
+                    return c_guess_log[0], F_guess_log[0], c_guess_log, F_guess_log, J_log
+
+                return c_guess_log[0], F_guess_log[0] 
+
+
+        #termination conditions
+        if i > 1:
+            #J increasing condition
+            denom = np.abs(J_log[i-1] - J_log[0])
+            J_stat = np.inf if denom == 0 else np.abs(J_log[i] - J_log[i-1])/denom
+            #print(f"Jdiff (should be neg): {J_log[i] - J_log[i-1]}")
+            if J_stat < J_tol:
+                if log:
+                    return c_guess, _asnumpy(F_guess), c_guess_log, F_guess_log, J_log
+                return c_guess, _asnumpy(F_guess)
+            elif (J_log[i] - J_log[i-1] > 0 and J_log[i] - J_log[i-2] > 0):
+                if log:
+                    return c_guess_log[i-2], F_guess_log[i-2], c_guess_log, F_guess_log, J_log
+                return c_guess_log[i-2], F_guess_log[i-2]
+
+    if log:
+        return c_guess, _asnumpy(F_guess), c_guess_log, F_guess_log, J_log
+    return c_guess, _asnumpy(F_guess)

@@ -85,28 +85,32 @@ def ifftshift(x, *args, **kwargs):
 
 
 def forward_H(microscope: Microscope, 
-              aberration: Aberration):
+              aberration: Aberration,
+              gaussian = False):
     
     H = microscope.compute_pupil_function(aberration = aberration, 
-                                          gaussian = False) 
+                                          gaussian = gaussian) 
     return H
 
 
 def forward_h(microscope: Microscope, 
-              aberration: Aberration):
+              aberration: Aberration,
+              gaussian = False):
     
     H = forward_H(microscope = microscope, 
-                  aberration = aberration)
+                  aberration = aberration,
+                  gaussian = gaussian)
     H = _asarray(H, dtype=_xp().complex128 if USE_CUPY else np.complex128)
     h = ifft2(H, workers = -1)
     return h
 
 
 def forward_PSF(microscope: Microscope, 
-                aberration: Aberration):
+                aberration: Aberration,
+                gaussian = False):
     
     h = forward_h(microscope = microscope, 
-                  aberration = aberration)
+                  aberration = aberration, gaussian = gaussian)
     xp = _xp(h)
     shifted_psf = xp.abs(h)**(2 * microscope.N_order)
     psf = fftshift(shifted_psf)
@@ -127,10 +131,12 @@ def circular_convolve(f: np.array,
 
 def forward_image(microscope: Microscope, 
                   f: np.array, 
-                  aberration: Aberration):
+                  aberration: Aberration,
+                  gaussian = False):
     
     psf = forward_PSF(microscope = microscope,
-                       aberration = aberration)
+                       aberration = aberration,
+                       gaussian = gaussian)
     
     final_img = circular_convolve(f = f, psf = psf)
     return final_img
@@ -139,11 +145,13 @@ def forward_image(microscope: Microscope,
 def get_diversity_image(microscope: Microscope, 
                         f: np.array, 
                         true_aberration: Aberration, 
-                        diversity_aberration: Aberration):
+                        diversity_aberration: Aberration,
+                        gaussian = False):
     
     img = forward_image(microscope = microscope, 
                          f = f, 
-                         aberration = true_aberration + diversity_aberration)
+                         aberration = true_aberration + diversity_aberration,
+                         gaussian = gaussian)
     return img
 
 
@@ -180,8 +188,9 @@ def pre_compute_cache(microscope: Microscope,
                       D_stack: np.array,
                       Z_stack: np.array,
                       a_guess: Aberration,
-                      a_stack: np.array):
-    H_stack = _asarray([forward_H(microscope, a + a_guess) for a in a_stack])
+                      a_stack: np.array,
+                      gaussian = False):
+    H_stack = _asarray([forward_H(microscope, a + a_guess, gaussian) for a in a_stack])
     xp = _xp(H_stack)
 
     H_stack = H_stack.astype(xp.complex128)
@@ -364,7 +373,8 @@ def loop_optimize(n_loops: int,
                   modes_corrected: np.array,
                   params: dict,
                   debug: bool,
-                  log: bool):
+                  log: bool,
+                  gaussian = False):
     
     try:
         gamma                   = params["gamma"]
@@ -378,10 +388,8 @@ def loop_optimize(n_loops: int,
     F_guess = 0
     c_guess = np.zeros(len(modes_corrected), dtype=np.float64)
 
-    #initialize logs
-    if log:
-        c_guess_log = np.zeros((n_loops, len(modes_corrected)), dtype=np.float64) 
-        F_guess_log = np.zeros((n_loops, microscope.grid_bfp, microscope.grid_bfp), dtype=np.complex128) 
+    c_guess_log = np.zeros((n_loops, len(modes_corrected)), dtype=np.float64) 
+    F_guess_log = np.zeros((n_loops, microscope.grid_bfp, microscope.grid_bfp), dtype=np.complex128) 
 
     J_log = np.zeros(n_loops, dtype=np.float64) if log else np.zeros(n_loops, dtype=np.float64)
 
@@ -396,7 +404,8 @@ def loop_optimize(n_loops: int,
                                   D_stack = D_stack,
                                   Z_stack = Z_stack,
                                   a_guess = a_guess,
-                                  a_stack = a_stack)
+                                  a_stack = a_stack,
+                                  gaussian = gaussian)
 
 
         J = objective(cache,
@@ -452,25 +461,32 @@ def loop_optimize(n_loops: int,
 
 
         a_guess = Aberration(modes_corrected, c_guess)
-        if log:
-            c_guess_log[i] = c_guess 
-            if F_guess_log is not None:
-                F_guess_log[i] = _asnumpy(F_guess) 
+        c_guess_log[i] = c_guess 
+        F_guess_log[i] = _asnumpy(F_guess) 
         J_log[i] = J
 
+        if i == 1:
+            if J_log[1] - J_log[0] > 0:
+                if log:
+                    return c_guess_log[0], F_guess_log[0], c_guess_log, F_guess_log, J_log
+
+                return c_guess_log[0], F_guess_log[0] 
+
+
         #termination conditions
-        if i > 0:
+        if i > 1:
             #J increasing condition
             denom = np.abs(J_log[i-1] - J_log[0])
             J_stat = np.inf if denom == 0 else np.abs(J_log[i] - J_log[i-1])/denom
-            #print(f"Jdiff (should be neg): {J_log[i] - J_log[i-1]}")
-            if J_stat < J_tol or J_log[i] - J_log[i-1] > 0:
+            if J_stat < J_tol:
                 if log:
-                    return c_guess, _asnumpy(F_guess), c_guess_log, F_guess_log, J_log 
-                else:
-                    return c_guess, _asnumpy(F_guess)
-                        
+                    return c_guess, _asnumpy(F_guess), c_guess_log, F_guess_log, J_log
+                return c_guess, _asnumpy(F_guess)
+            elif (J_log[i] - J_log[i-1] > 0 and J_log[i] - J_log[i-2] > 0):
+                if log:
+                    return c_guess_log[i-2], F_guess_log[i-2], c_guess_log, F_guess_log, J_log
+                return c_guess_log[i-2], F_guess_log[i-2]
+
     if log:
-        return c_guess, _asnumpy(F_guess), c_guess_log, F_guess_log, J_log 
-    else:
-        return c_guess, _asnumpy(F_guess)
+        return c_guess, _asnumpy(F_guess), c_guess_log, F_guess_log, J_log
+    return c_guess, _asnumpy(F_guess)

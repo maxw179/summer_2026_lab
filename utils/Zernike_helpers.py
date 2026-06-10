@@ -15,18 +15,22 @@ def radial_zernike(m, n, rho):
         total += (numerator/denominator) * rho**(n - 2 * k)
     return total
 
+def zernike_norm_factor(m, n):
+    if m == 0:
+        return np.sqrt(n + 1)
+    return np.sqrt(2 * (n + 1))
+
+
 def zernike_mode(m, n, rho, phi):
     radial_component = radial_zernike(np.abs(m), n, rho)
-    #no angular dependence
-    if m == 0:
-        return radial_component
-    #odd zernikes
-    elif m < 0:
-        return radial_component * np.sin(np.abs(m) * phi)
-    #even zernikes
-    else:
-        return radial_component * np.cos(np.abs(m) * phi)
 
+    if m == 0:
+        Z = radial_component
+    elif m < 0:
+        Z = radial_component * np.sin(np.abs(m) * phi)
+    else:
+        Z = radial_component * np.cos(np.abs(m) * phi)
+    return zernike_norm_factor(m, n) * Z
 #convert from the pupil coordinates into Zernike land
 def pupil_polar_coords(theta_grid, phi_grid, alpha):
     rho = np.sin(theta_grid) / np.sin(alpha)
@@ -184,14 +188,16 @@ def get_johnson_modes():
     [-2, 2], [0, 2], [2, 2],
     [-3, 3], [-1, 3], [1, 3], [3, 3],
     [-4, 4], [-2, 4], [0, 4], [2, 4], [4, 4],
-    [-5, 5], [-3, 5], [-1, 5], [1, 5], [3, 5]], dtype = int)
+    [-5, 5], [-3, 5], [-1, 5], [1, 5], [3, 5], [5,5]], dtype = int)
     return modes
 
-def generate_johnson_aberration(RMS_desired, alpha, rng = np.random.default_rng(),
-                               num_modes = 17):
-    modes = get_johnson_modes()[:num_modes]
+def generate_johnson_aberration(RMS_desired, alpha, rng = np.random.default_rng()):
+    modes = get_johnson_modes()
 
     strengths = rng.uniform(-1, 1, len(modes))
+    #only 30% get chosen to have a nonzero value
+    chosen_mask = rng.choice([0,1], p = [0.7, 0.3], size = len(strengths))
+    strengths = strengths * chosen_mask
     raw_johnson_aberration = Aberration(modes, strengths)
     RMS_true = zernike_RMS(raw_johnson_aberration, alpha)
     scaled_johnson_aberration = Aberration(modes, [s * RMS_desired / RMS_true for s in strengths])
@@ -213,8 +219,8 @@ def zernike_RMS_difference(a_1, a_2, alpha, n=100):
         z_1_out = z_1(theta_grid[mask], phi_grid[mask])
         z_2_out = z_2(theta_grid[mask], phi_grid[mask])
 
-        # difference in "waves"
-        dz = (z_1_out - z_2_out) 
+        #difference in radians -> waves
+        dz = (z_1_out - z_2_out) / (2 * np.pi)
 
         return np.sqrt(np.mean(dz**2))
 
